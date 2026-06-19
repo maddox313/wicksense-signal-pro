@@ -1,0 +1,85 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  settings  UserSettings?
+  trades    Trade[]
+  alerts    AlertLog[]
+}
+
+model UserSettings {
+  id                     String  @id @default(cuid())
+  userId                 String  @unique
+  user                   User    @relation(fields: [userId], references: [id])
+  defaultMode            String  @default("paper")
+  maxConsecutiveLosses   Int     @default(3)
+  positionSizeMinPercent Float   @default(1)
+  positionSizeMaxPercent Float   @default(5)
+  riskPercentMin         Float   @default(0.5)
+  riskPercentMax         Float   @default(2)
+  maxOpenPositions       Int     @default(5)
+  emailAlerts            Boolean @default(false)
+  smsAlerts              Boolean @default(false)
+  pushAlerts             Boolean @default(true)
+  alertOnBuy             Boolean @default(true)
+  alertOnSell            Boolean @default(true)
+  alertOnStopLoss        Boolean @default(true)
+  alertOnSafetyStop      Boolean @default(true)
+  alpacaApiKey           String?
+  alpacaSecretKey        String?
+  alpacaPaper            Boolean @default(true)
+}
+
+model Trade {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  symbol     String
+  side       String
+  quantity   Float
+  entryPrice Float
+  exitPrice  Float?
+  entryTime  DateTime
+  exitTime   DateTime?
+  pnl        Float?
+  pnlPercent Float?
+  mode       String
+  strategy   String
+  status     String
+  createdAt  DateTime @default(now())
+}
+
+model AlertLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  type      String
+  channel   String
+  message   String
+  sentAt    DateTime @default(now())
+}
+
+model Preset {
+  id           String  @id @default(cuid())
+  userId       String?
+  name         String
+  description  String
+  tradingStyle String
+  strategies   String
+  timeframe    String
+  riskJson     String
+  isAiGenerated Boolean @default(false)
+  enabled      Boolean @default(true)
+}

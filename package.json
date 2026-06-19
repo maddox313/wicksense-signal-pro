@@ -1,0 +1,14 @@
+{
+  "name": "wicksense-signal-pro",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @wicksense/web",
+    "build": "npm run build -w @wicksense/web",
+    "lint": "npm run lint -w @wicksense/web"
+  }
+}

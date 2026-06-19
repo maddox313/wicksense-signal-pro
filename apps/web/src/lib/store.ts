@@ -1,0 +1,153 @@
+import { create } from "zustand";
+import type {
+  ChartMarker,
+  Trade,
+  StrategyPreset,
+  PerformanceStats,
+  TradeMode,
+  RiskSettings,
+  AlertSettings,
+  Signal,
+  TradingStyle,
+} from "@wicksense/core";
+import { DEFAULT_RISK_SETTINGS, DEFAULT_ALERT_SETTINGS } from "@wicksense/core";
+
+export interface MultiChartSlot {
+  id: string;
+  label: string;
+  symbol: string;
+  timeframe: string;
+  tradingStyle: TradingStyle;
+  mode: TradeMode;
+  autoTradeEnabled: boolean;
+  markers: ChartMarker[];
+  safetyStopActive: boolean;
+  consecutiveLosses: number;
+}
+
+const DEFAULT_MULTI_SLOTS: MultiChartSlot[] = [
+  { id: "multi-1", label: "Chart 1", symbol: "AAPL", timeframe: "5m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
+  { id: "multi-2", label: "Chart 2", symbol: "MSFT", timeframe: "5m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
+  { id: "multi-3", label: "Chart 3", symbol: "GOOGL", timeframe: "5m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
+  { id: "multi-4", label: "Chart 4", symbol: "NVDA", timeframe: "5m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
+];
+
+interface AppState {
+  symbol: string;
+  timeframe: string;
+  tradingStyle: "day" | "swing";
+  mode: TradeMode;
+  autoTradeEnabled: boolean;
+  markers: ChartMarker[];
+  trades: Trade[];
+  signals: Signal[];
+  presets: StrategyPreset[];
+  activePresetId: string;
+  riskSettings: RiskSettings;
+  alertSettings: AlertSettings;
+  performance: PerformanceStats | null;
+  safetyStopActive: boolean;
+  consecutiveLosses: number;
+  multiChartSlots: MultiChartSlot[];
+
+  setSymbol: (symbol: string) => void;
+  setTimeframe: (tf: string) => void;
+  setTradingStyle: (style: "day" | "swing") => void;
+  setMode: (mode: TradeMode) => void;
+  setAutoTradeEnabled: (enabled: boolean) => void;
+  addMarker: (marker: ChartMarker) => void;
+  clearMarkers: () => void;
+  addTrade: (trade: Trade) => void;
+  updateTrade: (id: string, updates: Partial<Trade>) => void;
+  addSignal: (signal: Signal) => void;
+  setPresets: (presets: StrategyPreset[]) => void;
+  setActivePresetId: (id: string) => void;
+  setRiskSettings: (settings: RiskSettings) => void;
+  setAlertSettings: (settings: AlertSettings) => void;
+  setPerformance: (stats: PerformanceStats) => void;
+  setSafetyStopActive: (active: boolean) => void;
+  setConsecutiveLosses: (count: number) => void;
+  resetSafetyStop: () => void;
+  updateMultiChartSlot: (id: string, updates: Partial<MultiChartSlot>) => void;
+  addMultiChartMarker: (slotId: string, marker: ChartMarker) => void;
+  clearMultiChartMarkers: (slotId: string) => void;
+}
+
+export const useAppStore = create<AppState>((set) => ({
+  symbol: "AAPL",
+  timeframe: "5m",
+  tradingStyle: "day",
+  mode: "paper",
+  autoTradeEnabled: false,
+  markers: [],
+  trades: [],
+  signals: [],
+  presets: [],
+  activePresetId: "",
+  riskSettings: DEFAULT_RISK_SETTINGS,
+  alertSettings: DEFAULT_ALERT_SETTINGS,
+  performance: null,
+  safetyStopActive: false,
+  consecutiveLosses: 0,
+  multiChartSlots: DEFAULT_MULTI_SLOTS,
+
+  setSymbol: (symbol) => set({ symbol: symbol.toUpperCase() }),
+  setTimeframe: (timeframe) => set({ timeframe }),
+  setTradingStyle: (tradingStyle) => set({ tradingStyle }),
+  setMode: (mode) => set({ mode }),
+  setAutoTradeEnabled: (autoTradeEnabled) => set({ autoTradeEnabled }),
+  addMarker: (marker) =>
+    set((s) => {
+      const withoutDuplicate = s.markers.filter((m) => m.id !== marker.id);
+      return { markers: [...withoutDuplicate, marker] };
+    }),
+  clearMarkers: () => set({ markers: [] }),
+  addTrade: (trade) =>
+    set((s) => {
+      const withoutDuplicate = s.trades.filter((t) => t.id !== trade.id);
+      return { trades: [trade, ...withoutDuplicate] };
+    }),
+  updateTrade: (id, updates) =>
+    set((s) => ({
+      trades: s.trades.map((t) => (t.id === id ? { ...t, ...updates } : t)),
+    })),
+  addSignal: (signal) =>
+    set((s) => {
+      const withoutDuplicate = s.signals.filter((existing) => existing.id !== signal.id);
+      return { signals: [signal, ...withoutDuplicate].slice(0, 50) };
+    }),
+  setPresets: (presets) => set({ presets }),
+  setActivePresetId: (activePresetId) => set({ activePresetId }),
+  setRiskSettings: (riskSettings) => set({ riskSettings }),
+  setAlertSettings: (alertSettings) => set({ alertSettings }),
+  setPerformance: (performance) => set({ performance }),
+  setSafetyStopActive: (safetyStopActive) => set({ safetyStopActive }),
+  setConsecutiveLosses: (consecutiveLosses) => set({ consecutiveLosses }),
+  resetSafetyStop: () => set({ safetyStopActive: false, consecutiveLosses: 0 }),
+  updateMultiChartSlot: (id, updates) =>
+    set((s) => ({
+      multiChartSlots: s.multiChartSlots.map((slot) =>
+        slot.id === id ? { ...slot, ...updates } : slot
+      ),
+    })),
+  addMultiChartMarker: (slotId, marker) =>
+    set((s) => ({
+      multiChartSlots: s.multiChartSlots.map((slot) =>
+        slot.id === slotId
+          ? {
+              ...slot,
+              markers: [
+                ...slot.markers.filter((m) => m.id !== marker.id),
+                marker,
+              ],
+            }
+          : slot
+      ),
+    })),
+  clearMultiChartMarkers: (slotId) =>
+    set((s) => ({
+      multiChartSlots: s.multiChartSlots.map((slot) =>
+        slot.id === slotId ? { ...slot, markers: [] } : slot
+      ),
+    })),
+}));
