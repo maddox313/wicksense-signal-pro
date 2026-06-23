@@ -43,22 +43,26 @@ model UserSettings {
 }
 
 model Trade {
-  id         String   @id @default(cuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id])
-  symbol     String
-  side       String
-  quantity   Float
-  entryPrice Float
-  exitPrice  Float?
-  entryTime  DateTime
-  exitTime   DateTime?
-  pnl        Float?
-  pnlPercent Float?
-  mode       String
-  strategy   String
-  status     String
-  createdAt  DateTime @default(now())
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id])
+  symbol            String
+  side              String
+  quantity          Float
+  entryPrice        Float
+  exitPrice         Float?
+  entryTime         DateTime
+  exitTime          DateTime?
+  pnl               Float?
+  pnlPercent        Float?
+  mode              String
+  strategy          String
+  status            String
+  chartSlot         String?
+  stopLossPrice     Float?
+  alpacaOrderId     String?
+  alpacaStopOrderId String?
+  createdAt         DateTime  @default(now())
 }
 
 model AlertLog {

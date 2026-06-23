@@ -1,4 +1,4 @@
-import type { Trade } from "@wicksense/core";
+import type { Trade, TradeSide } from "@wicksense/core";
 import { DEFAULT_RISK_SETTINGS } from "@wicksense/core";
 import {
   getPositions,
@@ -7,12 +7,16 @@ import {
 } from "@/lib/alpaca";
 import { hasPaperCredentials, hasLiveCredentials } from "@/lib/broker-config";
 import { ALPACA_SYNC_SLOT } from "@/lib/chart-slots";
-import { getRiskEngine } from "@/lib/risk-engine-registry";
 import {
-  getAllTrades,
-  getOpenTrades,
-  upsertTrade,
-} from "@/lib/trade-store";
+  alpacaPositionQty,
+  alpacaPositionSide,
+  alpacaSyncTradeId,
+  computeClosePnl,
+  computeClosePnlPercent,
+  positionKey,
+} from "@/lib/position-sync-helpers";
+import { getRiskEngine } from "@/lib/risk-engine-registry";
+import { getOpenTrades, upsertTrade } from "@/lib/trade-store";
 
 export interface PositionSyncResult {
   mode: "paper" | "live";
@@ -24,22 +28,17 @@ export interface PositionSyncResult {
   error?: string;
 }
 
-function parseQty(position: AlpacaPosition): number {
-  return Math.abs(parseFloat(position.qty));
-}
-
-function closeTradeAtPrice(trade: Trade, exitPrice: number, reason: string) {
-  const pnl = (exitPrice - trade.entryPrice) * trade.quantity;
+async function closeTradeAtPrice(trade: Trade, exitPrice: number, reason: string) {
+  const pnl = computeClosePnl(trade, exitPrice);
   const slot = trade.chartSlot ?? ALPACA_SYNC_SLOT;
   getRiskEngine(slot, DEFAULT_RISK_SETTINGS).recordTradeResult(pnl);
 
-  upsertTrade({
+  await upsertTrade({
     ...trade,
     exitPrice,
     exitTime: Date.now(),
     pnl,
-    pnlPercent:
-      trade.entryPrice > 0 ? (pnl / (trade.entryPrice * trade.quantity)) * 100 : 0,
+    pnlPercent: computeClosePnlPercent(trade, pnl),
     status: "closed",
     strategy: trade.strategy === "alpaca-sync" ? `closed:${reason}` : trade.strategy,
   });
@@ -55,6 +54,16 @@ async function resolveExitPrice(symbol: string, fallback: number): Promise<numbe
     /* use fallback */
   }
   return fallback;
+}
+
+function indexAlpacaPositions(positions: AlpacaPosition[]) {
+  const byKey = new Map<string, AlpacaPosition>();
+  for (const p of positions) {
+    const qty = alpacaPositionQty(p);
+    if (qty <= 0) continue;
+    byKey.set(positionKey(p.symbol, alpacaPositionSide(p)), p);
+  }
+  return byKey;
 }
 
 export async function syncAlpacaPositions(
@@ -83,48 +92,49 @@ export async function syncAlpacaPositions(
     };
   }
 
-  const alpacaBySymbol = new Map<string, AlpacaPosition>();
-  for (const p of positions) {
-    const qty = parseQty(p);
-    if (qty > 0) alpacaBySymbol.set(p.symbol, p);
-  }
-
-  const alpacaSymbols = [...alpacaBySymbol.keys()];
+  const alpacaByKey = indexAlpacaPositions(positions);
+  const alpacaSymbols = [...new Set([...alpacaByKey.values()].map((p) => p.symbol))];
   let imported = 0;
   let closed = 0;
   let quantityUpdated = 0;
 
-  const openForMode = getOpenTrades(mode);
+  const openForMode = await getOpenTrades(mode);
 
   for (const trade of openForMode) {
-    const alpacaPos = alpacaBySymbol.get(trade.symbol);
+    const key = positionKey(trade.symbol, trade.side);
+    const alpacaPos = alpacaByKey.get(key);
     if (!alpacaPos) {
       const exitPrice = await resolveExitPrice(trade.symbol, trade.entryPrice);
-      closeTradeAtPrice(trade, exitPrice, "alpaca-flat");
+      await closeTradeAtPrice(trade, exitPrice, "alpaca-flat");
       closed++;
       continue;
     }
 
-    const alpacaQty = parseQty(alpacaPos);
-    if (alpacaQty !== trade.quantity) {
-      upsertTrade({
+    const alpacaQty = alpacaPositionQty(alpacaPos);
+    const alpacaSide = alpacaPositionSide(alpacaPos);
+    const entry = parseFloat(alpacaPos.avg_entry_price) || trade.entryPrice;
+    if (alpacaQty !== trade.quantity || alpacaSide !== trade.side || entry !== trade.entryPrice) {
+      await upsertTrade({
         ...trade,
+        side: alpacaSide,
         quantity: alpacaQty,
-        entryPrice: parseFloat(alpacaPos.avg_entry_price) || trade.entryPrice,
+        entryPrice: entry,
       });
       quantityUpdated++;
     }
-    alpacaBySymbol.delete(trade.symbol);
+    alpacaByKey.delete(key);
   }
 
-  for (const [symbol, pos] of alpacaBySymbol) {
-    const qty = parseQty(pos);
+  for (const [key, pos] of alpacaByKey) {
+    const side = alpacaPositionSide(pos);
+    const qty = alpacaPositionQty(pos);
     const entry = parseFloat(pos.avg_entry_price);
+    const symbol = pos.symbol;
 
-    upsertTrade({
-      id: `alpaca-sync-${mode}-${symbol}`,
+    await upsertTrade({
+      id: alpacaSyncTradeId(mode, symbol, side),
       symbol,
-      side: "buy",
+      side,
       quantity: qty,
       entryPrice: entry,
       entryTime: Date.now(),
@@ -135,6 +145,7 @@ export async function syncAlpacaPositions(
       stopLossPrice: undefined,
     });
     imported++;
+    void key;
   }
 
   return {
@@ -157,3 +168,5 @@ export async function syncAllAlpacaPositions(): Promise<{
   ]);
   return { paper, live };
 }
+
+export { alpacaPositionSide, alpacaPositionQty, positionKey, computeClosePnl };

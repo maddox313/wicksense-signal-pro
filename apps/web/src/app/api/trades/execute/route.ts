@@ -69,9 +69,8 @@ export async function POST(req: NextRequest) {
   await reconcileMode(mode);
 
   const engine = getEngine(chartSlot, riskSettings);
-  const openBuy = findOpenTrade(symbol, mode, chartSlot);
+  const openBuy = await findOpenTrade(symbol, mode, chartSlot, "buy");
   const contact = getUserContact();
-  const allTrades = getAllTrades();
 
   if (side === "sell") {
     if (!openBuy) {
@@ -105,7 +104,7 @@ export async function POST(req: NextRequest) {
       pnlPercent: (pnl / (openBuy.entryPrice * openBuy.quantity)) * 100,
       status: "closed",
     };
-    upsertTrade(closed);
+    await upsertTrade(closed);
     engine.recordTradeResult(pnl);
     if (signalId) executedSignalIds.add(signalKey(chartSlot, signalId));
 
@@ -117,12 +116,13 @@ export async function POST(req: NextRequest) {
       contact
     );
 
+    const allTrades = await getAllTrades();
     return NextResponse.json({
       trade: closed,
       skipped: false,
       consecutiveLosses: engine.getConsecutiveLosses(),
       safetyStopTriggered: engine.isSafetyStopActive(),
-      performance: computePerformanceStats(getAllTrades()),
+      performance: computePerformanceStats(allTrades),
     });
   }
 
@@ -130,11 +130,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ skipped: true, reason: "Signal already traded" });
   }
 
-  if (isAlpacaMode(mode) && findOpenTrade(symbol, mode)) {
+  if (isAlpacaMode(mode) && (await findOpenTrade(symbol, mode, undefined, "buy"))) {
+    const existing = await findOpenTrade(symbol, mode);
     return NextResponse.json({
       skipped: true,
       reason: "Alpaca already has an open position for this symbol",
-      trade: findOpenTrade(symbol, mode),
+      trade: existing,
     });
   }
 
@@ -146,7 +147,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const openTrades = getOpenTrades();
+  const openTrades = await getOpenTrades();
   const slotOpenCount = openTrades.filter((t) => t.chartSlot === chartSlot).length;
   const check = engine.canOpenTrade(slotOpenCount);
   if (!check.allowed) {
@@ -228,7 +229,7 @@ export async function POST(req: NextRequest) {
     alpacaOrderId,
     alpacaStopOrderId,
   };
-  upsertTrade(trade);
+  await upsertTrade(trade);
 
   if (signalId) executedSignalIds.add(signalKey(chartSlot, signalId));
 
@@ -253,12 +254,13 @@ export async function POST(req: NextRequest) {
     await syncAlpacaPositions(mode);
   }
 
+  const allTrades = await getAllTrades();
   return NextResponse.json({
     trade,
     skipped: false,
     accountEquity,
     consecutiveLosses: engine.getConsecutiveLosses(),
     safetyStopTriggered: engine.isSafetyStopActive(),
-    performance: computePerformanceStats(getAllTrades()),
+    performance: computePerformanceStats(allTrades),
   });
 }

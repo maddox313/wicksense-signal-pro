@@ -14,6 +14,7 @@ import {
   LayoutGrid,
   Wallet,
 } from "lucide-react";
+import { SyncStatusIndicator } from "@/components/SyncStatusIndicator";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -60,7 +61,8 @@ export function Sidebar() {
           );
         })}
       </nav>
-      <div className="border-t border-[var(--card-border)] p-4">
+      <SyncStatusIndicator />
+      <div className="border-t border-[var(--card-border)] px-4 py-2">
         <p className="text-[10px] text-[var(--muted)]">v0.1.0 MVP</p>
       </div>
     </aside>

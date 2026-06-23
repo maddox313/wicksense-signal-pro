@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "db:push": "prisma db push",
-    "db:generate": "prisma generate"
+    "db:generate": "prisma generate",
+    "test:sync": "node --experimental-strip-types --test src/lib/position-sync-helpers.test.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.5.0",

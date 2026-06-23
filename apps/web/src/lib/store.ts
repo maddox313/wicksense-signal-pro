@@ -35,6 +35,32 @@ function createInitialSlotMarketData(): Record<string, SlotMarketData> {
   );
 }
 
+export interface PositionSyncModeStatus {
+  mode: "paper" | "live";
+  skipped: boolean;
+  imported: number;
+  closed: number;
+  quantityUpdated: number;
+  alpacaSymbols: string[];
+  error?: string;
+}
+
+export interface SyncStatusState {
+  lastSyncTime: string | null;
+  loading: boolean;
+  paper: PositionSyncModeStatus | null;
+  live: PositionSyncModeStatus | null;
+  error: string | null;
+}
+
+export const EMPTY_SYNC_STATUS: SyncStatusState = {
+  lastSyncTime: null,
+  loading: false,
+  paper: null,
+  live: null,
+  error: null,
+};
+
 export interface MultiChartSlot {
   id: string;
   label: string;
@@ -73,6 +99,7 @@ interface AppState {
   consecutiveLosses: number;
   multiChartSlots: MultiChartSlot[];
   slotMarketData: Record<string, SlotMarketData>;
+  syncStatus: SyncStatusState;
 
   setSymbol: (symbol: string) => void;
   setTimeframe: (tf: string) => void;
@@ -97,6 +124,7 @@ interface AppState {
   addMultiChartMarker: (slotId: string, marker: ChartMarker) => void;
   clearMultiChartMarkers: (slotId: string) => void;
   patchSlotMarketData: (slotId: string, patch: Partial<SlotMarketData>) => void;
+  setSyncStatus: (status: Partial<SyncStatusState>) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -117,6 +145,7 @@ export const useAppStore = create<AppState>((set) => ({
   consecutiveLosses: 0,
   multiChartSlots: DEFAULT_MULTI_SLOTS,
   slotMarketData: createInitialSlotMarketData(),
+  syncStatus: { ...EMPTY_SYNC_STATUS },
 
   setSymbol: (symbol) => set({ symbol: symbol.toUpperCase() }),
   setTimeframe: (timeframe) => set({ timeframe }),
@@ -184,5 +213,9 @@ export const useAppStore = create<AppState>((set) => ({
         ...s.slotMarketData,
         [slotId]: { ...(s.slotMarketData[slotId] ?? EMPTY_SLOT_MARKET_DATA), ...patch },
       },
+    })),
+  setSyncStatus: (status) =>
+    set((s) => ({
+      syncStatus: { ...s.syncStatus, ...status },
     })),
 }));

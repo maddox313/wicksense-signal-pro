@@ -1,75 +1,173 @@
 import fs from "fs";
 import path from "path";
+import type { Trade as PrismaTrade } from "@prisma/client";
 import type { Trade, TradeMode } from "@wicksense/core";
+import { prisma } from "@/lib/db";
+import { ensureDefaultUserId } from "@/lib/default-user";
 
-const TRADES_PATH = path.join(process.cwd(), "trades.local.json");
+const LEGACY_TRADES_PATH = path.join(process.cwd(), "trades.local.json");
+const LEGACY_BACKUP_PATH = path.join(process.cwd(), "trades.local.json.bak");
 
-function loadTradesFromDisk(): Trade[] {
+let storeReady: Promise<void> | null = null;
+
+function rowToTrade(row: PrismaTrade): Trade {
+  return {
+    id: row.id,
+    symbol: row.symbol,
+    side: row.side as Trade["side"],
+    quantity: row.quantity,
+    entryPrice: row.entryPrice,
+    exitPrice: row.exitPrice ?? undefined,
+    entryTime: row.entryTime.getTime(),
+    exitTime: row.exitTime?.getTime(),
+    pnl: row.pnl ?? undefined,
+    pnlPercent: row.pnlPercent ?? undefined,
+    mode: row.mode as Trade["mode"],
+    strategy: row.strategy,
+    status: row.status as Trade["status"],
+    chartSlot: row.chartSlot ?? undefined,
+    stopLossPrice: row.stopLossPrice ?? undefined,
+    alpacaOrderId: row.alpacaOrderId ?? undefined,
+    alpacaStopOrderId: row.alpacaStopOrderId ?? undefined,
+  };
+}
+
+function tradeToRow(trade: Trade, userId: string) {
+  return {
+    id: trade.id,
+    userId,
+    symbol: trade.symbol,
+    side: trade.side,
+    quantity: trade.quantity,
+    entryPrice: trade.entryPrice,
+    exitPrice: trade.exitPrice ?? null,
+    entryTime: new Date(trade.entryTime),
+    exitTime: trade.exitTime ? new Date(trade.exitTime) : null,
+    pnl: trade.pnl ?? null,
+    pnlPercent: trade.pnlPercent ?? null,
+    mode: trade.mode,
+    strategy: trade.strategy,
+    status: trade.status,
+    chartSlot: trade.chartSlot ?? null,
+    stopLossPrice: trade.stopLossPrice ?? null,
+    alpacaOrderId: trade.alpacaOrderId ?? null,
+    alpacaStopOrderId: trade.alpacaStopOrderId ?? null,
+  };
+}
+
+async function migrateLegacyTrades(userId: string): Promise<number> {
+  if (!fs.existsSync(LEGACY_TRADES_PATH)) return 0;
+
+  let legacy: Trade[] = [];
   try {
-    if (!fs.existsSync(TRADES_PATH)) return [];
-    const raw = fs.readFileSync(TRADES_PATH, "utf8");
+    const raw = fs.readFileSync(LEGACY_TRADES_PATH, "utf8");
     const data = JSON.parse(raw) as Trade[];
-    return Array.isArray(data) ? data : [];
+    legacy = Array.isArray(data) ? data : [];
   } catch {
-    return [];
+    return 0;
   }
-}
 
-function persistTrades(trades: Trade[]) {
-  try {
-    fs.writeFileSync(TRADES_PATH, JSON.stringify(trades, null, 2), "utf8");
-  } catch (err) {
-    console.error("[trade-store] Failed to persist trades:", err);
+  if (legacy.length === 0) {
+    fs.renameSync(LEGACY_TRADES_PATH, LEGACY_BACKUP_PATH);
+    return 0;
   }
+
+  const existing = await prisma.trade.count({ where: { userId } });
+  if (existing > 0) {
+    fs.renameSync(LEGACY_TRADES_PATH, LEGACY_BACKUP_PATH);
+    return 0;
+  }
+
+  for (const trade of legacy) {
+    await prisma.trade.create({ data: tradeToRow(trade, userId) });
+  }
+
+  fs.renameSync(LEGACY_TRADES_PATH, LEGACY_BACKUP_PATH);
+  return legacy.length;
 }
 
-let trades: Trade[] = loadTradesFromDisk();
-
-export function getAllTrades(): Trade[] {
-  return [...trades];
+export async function ensureTradeStoreReady(): Promise<string> {
+  if (!storeReady) {
+    storeReady = (async () => {
+      const userId = await ensureDefaultUserId();
+      await migrateLegacyTrades(userId);
+    })();
+  }
+  await storeReady;
+  return ensureDefaultUserId();
 }
 
-export function setAllTrades(next: Trade[]) {
-  trades = [...next];
-  persistTrades(trades);
+export async function getAllTrades(): Promise<Trade[]> {
+  const userId = await ensureTradeStoreReady();
+  const rows = await prisma.trade.findMany({
+    where: { userId },
+    orderBy: { entryTime: "desc" },
+  });
+  return rows.map(rowToTrade);
 }
 
-export function getOpenTrades(mode?: TradeMode): Trade[] {
-  return trades.filter(
-    (t) => t.status === "open" && t.side === "buy" && (!mode || t.mode === mode)
-  );
+export async function setAllTrades(next: Trade[]): Promise<void> {
+  const userId = await ensureTradeStoreReady();
+  await prisma.$transaction([
+    prisma.trade.deleteMany({ where: { userId } }),
+    ...next.map((trade) => prisma.trade.create({ data: tradeToRow(trade, userId) })),
+  ]);
 }
 
-export function findOpenTrade(
+export async function getOpenTrades(mode?: TradeMode): Promise<Trade[]> {
+  const userId = await ensureTradeStoreReady();
+  const rows = await prisma.trade.findMany({
+    where: {
+      userId,
+      status: "open",
+      ...(mode ? { mode } : {}),
+    },
+    orderBy: { entryTime: "desc" },
+  });
+  return rows.map(rowToTrade);
+}
+
+export async function findOpenTrade(
   symbol: string,
   mode: TradeMode,
-  chartSlot?: string
-): Trade | undefined {
-  const open = getOpenTrades(mode).filter((t) => t.symbol === symbol);
+  chartSlot?: string,
+  side: Trade["side"] = "buy"
+): Promise<Trade | undefined> {
+  const open = (await getOpenTrades(mode)).filter(
+    (t) => t.symbol === symbol && t.side === side
+  );
   if (chartSlot) {
     return open.find((t) => t.chartSlot === chartSlot) ?? open[0];
   }
   return open[0];
 }
 
-export function hasOpenAlpacaPosition(symbol: string, mode: "paper" | "live"): boolean {
-  return getOpenTrades(mode).some((t) => t.symbol === symbol);
+export async function hasOpenAlpacaPosition(
+  symbol: string,
+  mode: "paper" | "live",
+  side: Trade["side"] = "buy"
+): Promise<boolean> {
+  return (await getOpenTrades(mode)).some((t) => t.symbol === symbol && t.side === side);
 }
 
-export function upsertTrade(trade: Trade) {
-  const idx = trades.findIndex((t) => t.id === trade.id);
-  if (idx >= 0) {
-    trades[idx] = trade;
-  } else {
-    trades.unshift(trade);
-  }
-  persistTrades(trades);
+export async function upsertTrade(trade: Trade): Promise<Trade> {
+  const userId = await ensureTradeStoreReady();
+  const row = await prisma.trade.upsert({
+    where: { id: trade.id },
+    create: tradeToRow(trade, userId),
+    update: tradeToRow(trade, userId),
+  });
+  return rowToTrade(row);
 }
 
-export function updateTrade(id: string, updates: Partial<Trade>) {
-  const idx = trades.findIndex((t) => t.id === id);
-  if (idx < 0) return undefined;
-  trades[idx] = { ...trades[idx], ...updates };
-  persistTrades(trades);
-  return trades[idx];
+export async function updateTrade(
+  id: string,
+  updates: Partial<Trade>
+): Promise<Trade | undefined> {
+  await ensureTradeStoreReady();
+  const existing = await prisma.trade.findUnique({ where: { id } });
+  if (!existing) return undefined;
+
+  const current = rowToTrade(existing);
+  return upsertTrade({ ...current, ...updates });
 }

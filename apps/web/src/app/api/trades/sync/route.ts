@@ -5,7 +5,7 @@ import { getAllTrades } from "@/lib/trade-store";
 
 export async function GET() {
   const sync = await syncAllAlpacaPositions();
-  const trades = getAllTrades();
+  const trades = await getAllTrades();
   const performance = computePerformanceStats(trades);
 
   return NextResponse.json({
