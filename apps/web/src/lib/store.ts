@@ -9,8 +9,31 @@ import type {
   AlertSettings,
   Signal,
   TradingStyle,
+  OHLCV,
 } from "@wicksense/core";
 import { DEFAULT_RISK_SETTINGS, DEFAULT_ALERT_SETTINGS } from "@wicksense/core";
+import { ALL_CHART_SLOT_IDS } from "./chart-slots";
+
+export interface SlotMarketData {
+  bars: OHLCV[];
+  quote?: { price: number; change: number };
+  loading: boolean;
+  fetchError: string | null;
+  dataSource: "live" | "mock" | null;
+}
+
+export const EMPTY_SLOT_MARKET_DATA: SlotMarketData = {
+  bars: [],
+  loading: true,
+  fetchError: null,
+  dataSource: null,
+};
+
+function createInitialSlotMarketData(): Record<string, SlotMarketData> {
+  return Object.fromEntries(
+    ALL_CHART_SLOT_IDS.map((id) => [id, { ...EMPTY_SLOT_MARKET_DATA }])
+  );
+}
 
 export interface MultiChartSlot {
   id: string;
@@ -49,6 +72,7 @@ interface AppState {
   safetyStopActive: boolean;
   consecutiveLosses: number;
   multiChartSlots: MultiChartSlot[];
+  slotMarketData: Record<string, SlotMarketData>;
 
   setSymbol: (symbol: string) => void;
   setTimeframe: (tf: string) => void;
@@ -58,6 +82,7 @@ interface AppState {
   addMarker: (marker: ChartMarker) => void;
   clearMarkers: () => void;
   addTrade: (trade: Trade) => void;
+  setTrades: (trades: Trade[]) => void;
   updateTrade: (id: string, updates: Partial<Trade>) => void;
   addSignal: (signal: Signal) => void;
   setPresets: (presets: StrategyPreset[]) => void;
@@ -71,6 +96,7 @@ interface AppState {
   updateMultiChartSlot: (id: string, updates: Partial<MultiChartSlot>) => void;
   addMultiChartMarker: (slotId: string, marker: ChartMarker) => void;
   clearMultiChartMarkers: (slotId: string) => void;
+  patchSlotMarketData: (slotId: string, patch: Partial<SlotMarketData>) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -90,6 +116,7 @@ export const useAppStore = create<AppState>((set) => ({
   safetyStopActive: false,
   consecutiveLosses: 0,
   multiChartSlots: DEFAULT_MULTI_SLOTS,
+  slotMarketData: createInitialSlotMarketData(),
 
   setSymbol: (symbol) => set({ symbol: symbol.toUpperCase() }),
   setTimeframe: (timeframe) => set({ timeframe }),
@@ -107,6 +134,7 @@ export const useAppStore = create<AppState>((set) => ({
       const withoutDuplicate = s.trades.filter((t) => t.id !== trade.id);
       return { trades: [trade, ...withoutDuplicate] };
     }),
+  setTrades: (trades) => set({ trades }),
   updateTrade: (id, updates) =>
     set((s) => ({
       trades: s.trades.map((t) => (t.id === id ? { ...t, ...updates } : t)),
@@ -149,5 +177,12 @@ export const useAppStore = create<AppState>((set) => ({
       multiChartSlots: s.multiChartSlots.map((slot) =>
         slot.id === slotId ? { ...slot, markers: [] } : slot
       ),
+    })),
+  patchSlotMarketData: (slotId, patch) =>
+    set((s) => ({
+      slotMarketData: {
+        ...s.slotMarketData,
+        [slotId]: { ...(s.slotMarketData[slotId] ?? EMPTY_SLOT_MARKET_DATA), ...patch },
+      },
     })),
 }));

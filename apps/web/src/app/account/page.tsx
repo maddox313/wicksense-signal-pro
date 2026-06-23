@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useAppStore } from "@/lib/store";
 import { computePerformanceStats } from "@wicksense/core";
+import type { LiveTradingSettings } from "@wicksense/core";
 import { DEFAULT_STARTING_BALANCE, formatUsd } from "@/lib/account-utils";
 import {
   Wallet,
@@ -12,6 +13,7 @@ import {
   TrendingUp,
   AlertCircle,
   CheckCircle,
+  Shield,
 } from "lucide-react";
 
 interface AccountSnapshot {
@@ -39,11 +41,41 @@ interface BalanceResponse {
   updatedAt: string;
 }
 
+interface LivePosition {
+  symbol: string;
+  qty: string;
+  avg_entry_price: string;
+  current_price: string;
+  unrealized_pl: string;
+  market_value: string;
+}
+
+interface LiveStopOrder {
+  id: string;
+  symbol: string;
+  qty: string;
+  type: string;
+  stop_price?: string;
+  status: string;
+}
+
+interface LiveTradingResponse {
+  configured: boolean;
+  settings: LiveTradingSettings;
+  positions: LivePosition[];
+  stopOrders: LiveStopOrder[];
+  error?: string;
+  updatedAt?: string;
+}
+
 export default function AccountPage() {
   const { trades, performance } = useAppStore();
   const [balances, setBalances] = useState<BalanceResponse | null>(null);
+  const [liveTrading, setLiveTrading] = useState<LiveTradingResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [savingLiveSettings, setSavingLiveSettings] = useState(false);
+  const [liveSettingsMessage, setLiveSettingsMessage] = useState<string | null>(null);
 
   const stats = performance ?? computePerformanceStats(trades);
   const paperTrades = trades.filter((t) => t.mode === "paper");
@@ -55,16 +87,45 @@ export default function AccountPage() {
     if (!silent) setLoading(true);
     else setRefreshing(true);
     try {
-      const res = await fetch("/api/account/balances");
-      const data = await res.json();
-      setBalances(data);
+      const [balanceRes, liveRes] = await Promise.all([
+        fetch("/api/account/balances"),
+        fetch("/api/account/live-trading"),
+      ]);
+      setBalances(await balanceRes.json());
+      setLiveTrading(await liveRes.json());
     } catch {
       setBalances(null);
+      setLiveTrading(null);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, []);
+
+  const saveLiveSettings = async (updates: Partial<LiveTradingSettings>) => {
+    setSavingLiveSettings(true);
+    setLiveSettingsMessage(null);
+    try {
+      const res = await fetch("/api/account/live-trading", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLiveSettingsMessage(data.error ?? "Failed to save");
+        return;
+      }
+      setLiveTrading((prev) =>
+        prev ? { ...prev, settings: data.settings } : prev
+      );
+      setLiveSettingsMessage("Live stop-loss settings saved");
+    } catch {
+      setLiveSettingsMessage("Failed to save settings");
+    } finally {
+      setSavingLiveSettings(false);
+    }
+  };
 
   useEffect(() => {
     fetchBalances();
@@ -137,6 +198,19 @@ export default function AccountPage() {
           source={balances?.live.connected ? "alpaca" : "unconfigured"}
         />
       </div>
+
+      <LiveStopLossSection
+        loading={loading}
+        liveConnected={balances?.live.connected ?? false}
+        liveConfigured={liveTrading?.configured ?? false}
+        settings={liveTrading?.settings}
+        positions={liveTrading?.positions ?? []}
+        stopOrders={liveTrading?.stopOrders ?? []}
+        error={liveTrading?.error}
+        saving={savingLiveSettings}
+        saveMessage={liveSettingsMessage}
+        onSave={saveLiveSettings}
+      />
 
       <section className="rounded-xl border border-[var(--card-border)] bg-[var(--card)] p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -386,5 +460,172 @@ function ModeBreakdown({
         </span>
       </div>
     </div>
+  );
+}
+
+function LiveStopLossSection({
+  loading,
+  liveConnected,
+  liveConfigured,
+  settings,
+  positions,
+  stopOrders,
+  error,
+  saving,
+  saveMessage,
+  onSave,
+}: {
+  loading: boolean;
+  liveConnected: boolean;
+  liveConfigured: boolean;
+  settings?: LiveTradingSettings;
+  positions: LivePosition[];
+  stopOrders: LiveStopOrder[];
+  error?: string;
+  saving: boolean;
+  saveMessage: string | null;
+  onSave: (updates: Partial<LiveTradingSettings>) => void;
+}) {
+  const stopBySymbol = new Map(stopOrders.map((o) => [o.symbol, o]));
+
+  return (
+    <section className="mb-6 rounded-xl border border-[var(--card-border)] bg-[var(--card)] p-6">
+      <div className="mb-4 flex items-start gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--danger)]/15">
+          <Shield className="h-5 w-5 text-[var(--danger)]" />
+        </div>
+        <div>
+          <h2 className="text-lg font-medium">Live Stop-Loss Protection</h2>
+          <p className="text-sm text-[var(--muted)]">
+            Broker-side stop orders on Alpaca live buys only — paper mode uses market orders without
+            attached stops
+          </p>
+        </div>
+      </div>
+
+      {!liveConfigured ? (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-400">
+          Add live Alpaca keys in{" "}
+          <Link href="/settings" className="underline">
+            Settings
+          </Link>{" "}
+          to enable broker stop-loss orders.
+        </div>
+      ) : (
+        <>
+          <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-[var(--card-border)] bg-white/5 p-4">
+              <input
+                type="checkbox"
+                checked={settings?.brokerStopLossEnabled ?? true}
+                disabled={saving}
+                onChange={(e) =>
+                  onSave({ brokerStopLossEnabled: e.target.checked })
+                }
+                className="h-4 w-4 accent-[var(--accent)]"
+              />
+              <div>
+                <p className="text-sm font-medium">Attach stop-loss on live buys</p>
+                <p className="text-xs text-[var(--muted)]">
+                  Places a GTC stop sell at Alpaca after each live entry
+                </p>
+              </div>
+            </label>
+
+            <div className="rounded-lg border border-[var(--card-border)] bg-white/5 p-4">
+              <label className="mb-2 block text-sm font-medium">
+                Stop distance: {settings?.stopLossPercent ?? 2}%
+              </label>
+              <input
+                type="range"
+                min={0.5}
+                max={10}
+                step={0.5}
+                value={settings?.stopLossPercent ?? 2}
+                disabled={saving}
+                onChange={(e) =>
+                  onSave({ stopLossPercent: parseFloat(e.target.value) })
+                }
+                className="w-full accent-[var(--accent)]"
+              />
+              <p className="mt-2 text-xs text-[var(--muted)]">
+                Also used for position sizing risk distance. Example on $310 entry: stop at $
+                {(310 * (1 - (settings?.stopLossPercent ?? 2) / 100)).toFixed(2)}
+              </p>
+            </div>
+          </div>
+
+          {saveMessage && (
+            <p className="mb-4 text-sm text-[var(--accent)]">{saveMessage}</p>
+          )}
+
+          {error && (
+            <p className="mb-4 flex items-center gap-2 text-sm text-[var(--danger)]">
+              <AlertCircle className="h-4 w-4" />
+              {error}
+            </p>
+          )}
+
+          <div>
+            <h3 className="mb-3 text-sm font-medium">Live positions &amp; active stops</h3>
+            {loading ? (
+              <p className="text-sm text-[var(--muted)]">Loading live account data...</p>
+            ) : !liveConnected ? (
+              <p className="text-sm text-[var(--muted)]">
+                Live account not connected — check keys in Settings
+              </p>
+            ) : positions.length === 0 ? (
+              <p className="text-sm text-[var(--muted)]">No open live positions at Alpaca</p>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-[var(--card-border)]">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-[var(--card-border)] bg-white/5 text-xs text-[var(--muted)]">
+                    <tr>
+                      <th className="p-3">Symbol</th>
+                      <th className="p-3">Qty</th>
+                      <th className="p-3">Entry</th>
+                      <th className="p-3">Current</th>
+                      <th className="p-3">Unrealized P&amp;L</th>
+                      <th className="p-3">Stop order</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {positions.map((p) => {
+                      const stop = stopBySymbol.get(p.symbol);
+                      const upl = parseFloat(p.unrealized_pl);
+                      return (
+                        <tr key={p.symbol} className="border-b border-[var(--card-border)]/60">
+                          <td className="p-3 font-medium">{p.symbol}</td>
+                          <td className="p-3">{p.qty}</td>
+                          <td className="p-3">${parseFloat(p.avg_entry_price).toFixed(2)}</td>
+                          <td className="p-3">${parseFloat(p.current_price).toFixed(2)}</td>
+                          <td
+                            className={`p-3 ${
+                              upl >= 0 ? "text-[var(--accent)]" : "text-[var(--danger)]"
+                            }`}
+                          >
+                            {formatUsd(upl)}
+                          </td>
+                          <td className="p-3">
+                            {stop?.stop_price ? (
+                              <span className="text-[var(--danger)]">
+                                ${parseFloat(stop.stop_price).toFixed(2)}{" "}
+                                <span className="text-[var(--muted)]">({stop.status})</span>
+                              </span>
+                            ) : (
+                              <span className="text-amber-400">No stop attached</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </section>
   );
 }

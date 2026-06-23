@@ -6,10 +6,35 @@ import {
   hasPaperCredentials,
   hasLiveCredentials,
 } from "./broker-config";
+import { DEFAULT_STARTING_BALANCE } from "./account-utils";
 
 const ALPACA_DATA_URL = "https://data.alpaca.markets/v2";
 const ALPACA_PAPER_URL = "https://paper-api.alpaca.markets";
 const ALPACA_LIVE_URL = "https://api.alpaca.markets";
+
+export interface AlpacaOrder {
+  id: string;
+  symbol: string;
+  qty: string;
+  side: "buy" | "sell";
+  type: string;
+  status: string;
+  stop_price?: string;
+  limit_price?: string;
+  created_at: string;
+}
+
+export interface AlpacaPosition {
+  symbol: string;
+  qty: string;
+  side: string;
+  market_value: string;
+  cost_basis: string;
+  unrealized_pl: string;
+  unrealized_plpc: string;
+  current_price: string;
+  avg_entry_price: string;
+}
 
 function getHeaders(creds?: { apiKey: string; secretKey: string }) {
   const { apiKey, secretKey } = creds ?? getBrokerCredentials();
@@ -77,6 +102,34 @@ export async function fetchAlpacaAccount(
       error: err instanceof Error ? err.message : "Failed to reach Alpaca",
     };
   }
+}
+
+/** Account equity for position sizing — paper/live from Alpaca, fallback for disconnected modes. */
+export async function resolveAccountEquity(
+  mode: "paper" | "live" | "manual" | "auto"
+): Promise<{ equity: number; source: "alpaca" | "fallback" }> {
+  if (mode === "live") {
+    const { account, error } = await fetchAlpacaAccount(false);
+    if (account && account.equity > 0) {
+      return { equity: account.equity, source: "alpaca" };
+    }
+    throw new Error(error ?? "Live Alpaca account equity unavailable");
+  }
+
+  const { account, error } = await fetchAlpacaAccount(true);
+  if (account && account.equity > 0) {
+    return { equity: account.equity, source: "alpaca" };
+  }
+
+  if (mode === "paper") {
+    throw new Error(error ?? "Paper Alpaca account equity unavailable");
+  }
+
+  return { equity: DEFAULT_STARTING_BALANCE, source: "fallback" };
+}
+
+function formatOrderPrice(price: number): string {
+  return price >= 1 ? price.toFixed(2) : price.toFixed(4);
 }
 
 const TIMEFRAME_MAP: Record<string, string> = {
@@ -191,14 +244,81 @@ export async function placeOrder(params: {
   return res.json();
 }
 
-export async function getPositions(paper?: boolean) {
+export async function getPositions(paper?: boolean): Promise<AlpacaPosition[]> {
   const usePaper = paper ?? getBrokerCredentials().paper;
   const creds = usePaper ? getPaperCredentials() : getLiveCredentials();
   const res = await fetch(`${getTradingUrl(usePaper)}/v2/positions`, {
     headers: getHeaders(creds),
+    cache: "no-store",
   });
   if (!res.ok) throw new Error("Failed to fetch positions");
   return res.json();
+}
+
+export async function getLivePositions(): Promise<AlpacaPosition[]> {
+  if (!hasLiveCredentials()) return [];
+  return getPositions(false);
+}
+
+export async function getLiveOpenOrders(): Promise<AlpacaOrder[]> {
+  if (!hasLiveCredentials()) return [];
+  const creds = getLiveCredentials();
+  const res = await fetch(`${ALPACA_LIVE_URL}/v2/orders?status=open&limit=100`, {
+    headers: getHeaders(creds),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error("Failed to fetch open orders");
+  return res.json();
+}
+
+/** Broker-side stop-loss sell order — live account only. */
+export async function placeLiveStopLossOrder(params: {
+  symbol: string;
+  qty: number;
+  stopPrice: number;
+}): Promise<AlpacaOrder> {
+  const creds = getLiveCredentials();
+  if (!creds.apiKey || !creds.secretKey) {
+    throw new Error("Live Alpaca credentials not configured");
+  }
+  const res = await fetch(`${ALPACA_LIVE_URL}/v2/orders`, {
+    method: "POST",
+    headers: { ...getHeaders(creds), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      symbol: params.symbol,
+      qty: params.qty,
+      side: "sell",
+      type: "stop",
+      stop_price: formatOrderPrice(params.stopPrice),
+      time_in_force: "gtc",
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Stop-loss order failed: ${err}`);
+  }
+  return res.json();
+}
+
+/** Cancel open live stop orders for a symbol before a manual/app sell. */
+export async function cancelLiveStopOrdersForSymbol(symbol: string): Promise<number> {
+  const orders = await getLiveOpenOrders();
+  const stops = orders.filter(
+    (o) =>
+      o.symbol === symbol &&
+      o.side === "sell" &&
+      (o.type === "stop" || o.type === "stop_limit")
+  );
+  const creds = getLiveCredentials();
+  let cancelled = 0;
+  for (const order of stops) {
+    const res = await fetch(`${ALPACA_LIVE_URL}/v2/orders/${order.id}`, {
+      method: "DELETE",
+      headers: getHeaders(creds),
+    });
+    if (res.ok) cancelled++;
+  }
+  return cancelled;
 }
 
 function generateMockBars(symbol: string, count: number): OHLCV[] {

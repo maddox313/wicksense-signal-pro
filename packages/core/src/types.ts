@@ -47,6 +47,16 @@ export interface Trade {
   strategy: string;
   status: "open" | "closed" | "cancelled";
   chartSlot?: string;
+  stopLossPrice?: number;
+  alpacaOrderId?: string;
+  alpacaStopOrderId?: string;
+}
+
+export interface LiveTradingSettings {
+  /** Attach a broker-side stop-loss order on live buys */
+  brokerStopLossEnabled: boolean;
+  /** Percent below entry for stop price (e.g. 2 = 2%) */
+  stopLossPercent: number;
 }
 
 export interface RiskSettings {
@@ -141,4 +151,9 @@ export const DEFAULT_ALERT_SETTINGS: AlertSettings = {
   onSell: true,
   onStopLoss: true,
   onSafetyStop: true,
+};
+
+export const DEFAULT_LIVE_TRADING_SETTINGS: LiveTradingSettings = {
+  brokerStopLossEnabled: true,
+  stopLossPercent: 2,
 };

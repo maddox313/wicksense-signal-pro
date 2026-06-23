@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import type { OHLCV } from "@wicksense/core";
 import { computePerformanceStats } from "@wicksense/core";
-import { useAppStore, type MultiChartSlot } from "@/lib/store";
+import { useAppStore, EMPTY_SLOT_MARKET_DATA } from "@/lib/store";
+import type { MultiChartSlot } from "@/lib/store";
+import { executeSlotTrade } from "@/lib/autoTradeRunner";
 import { ShoppingCart, DollarSign, Play, Pause, ShieldAlert } from "lucide-react";
 
 const TradingChart = dynamic(
@@ -26,178 +26,23 @@ interface ChartSlotPanelProps {
 }
 
 export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
-  const {
-    presets,
-    activePresetId,
-    riskSettings,
-    alertSettings,
-    trades,
-    addTrade,
-    addSignal,
-    updateMultiChartSlot,
-    addMultiChartMarker,
-    clearMultiChartMarkers,
-  } = useAppStore();
+  const { trades, updateMultiChartSlot, clearMultiChartMarkers, slotMarketData } = useAppStore();
 
-  const [bars, setBars] = useState<OHLCV[]>([]);
-  const [quote, setQuote] = useState<{ price: number; change: number }>();
-  const [loading, setLoading] = useState(true);
-  const [fetchError, setFetchError] = useState<string | null>(null);
+  const marketData = slotMarketData[slot.id] ?? EMPTY_SLOT_MARKET_DATA;
+  const { bars, quote, loading, fetchError } = marketData;
 
-  const activePreset = presets.find((p) => p.id === activePresetId) ?? presets[0];
-  const lastTradedSignalRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    lastTradedSignalRef.current = null;
-  }, [slot.symbol, slot.timeframe]);
-
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    setFetchError(null);
-    try {
-      const res = await fetch(
-        `/api/market/bars?symbol=${slot.symbol}&timeframe=${slot.timeframe}`
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to load market data");
-      setBars(data.bars ?? []);
-      if (data.bars && data.bars.length >= 2) {
-        const last = data.bars[data.bars.length - 1];
-        const prev = data.bars[data.bars.length - 2];
-        setQuote({ price: last.close, change: ((last.close - prev.close) / prev.close) * 100 });
-      }
-    } catch (err) {
-      setFetchError(err instanceof Error ? err.message : "Failed to load chart data");
-      setBars([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [slot.symbol, slot.timeframe]);
-
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
-
-  const executeTrade = useCallback(
-    async (side: "buy" | "sell", price: number, strategy: string, signalId?: string) => {
-      try {
-        const res = await fetch("/api/trades/execute", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            symbol: slot.symbol,
-            side,
-            price,
-            strategy,
-            mode: slot.mode,
-            riskSettings,
-            alertSettings,
-            signalId,
-            chartSlot: slot.id,
-          }),
-        });
-        const data = await res.json();
-        if (data.skipped) return;
-        if (!res.ok) {
-          console.error(data.error ?? "Trade failed");
-          return;
-        }
-        if (data.trade) {
-          addTrade(data.trade);
-          const barTime = bars[bars.length - 1]?.time ?? Math.floor(Date.now() / 1000);
-          const markerId = signalId ?? data.trade.id;
-          addMultiChartMarker(slot.id, {
-            id: markerId,
-            time: barTime,
-            price,
-            side,
-            label: side === "buy" ? "BUY" : "SELL",
-            strategy,
-          });
-        }
-        if (data.safetyStopTriggered) {
-          updateMultiChartSlot(slot.id, { safetyStopActive: true });
-        }
-        if (data.consecutiveLosses !== undefined) {
-          updateMultiChartSlot(slot.id, { consecutiveLosses: data.consecutiveLosses });
-        }
-      } catch (err) {
-        console.error("Trade execution failed", err);
-      }
-    },
-    [
-      slot.symbol,
-      slot.mode,
-      slot.id,
-      riskSettings,
-      alertSettings,
-      bars,
-      addTrade,
-      addMultiChartMarker,
-      updateMultiChartSlot,
-    ]
-  );
-
-  const runAnalysis = useCallback(async () => {
-    if (bars.length < 30 || !activePreset) return;
-    try {
-      const res = await fetch("/api/signals/detect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          symbol: slot.symbol,
-          bars,
-          strategyIds: activePreset.strategies,
-          style: slot.tradingStyle,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) return;
-      if (data.signal) {
-        addSignal(data.signal);
-        if (
-          slot.autoTradeEnabled &&
-          !slot.safetyStopActive &&
-          slot.mode !== "manual"
-        ) {
-          if (lastTradedSignalRef.current !== data.signal.id) {
-            lastTradedSignalRef.current = data.signal.id;
-            await executeTrade(
-              data.signal.side,
-              data.signal.price,
-              data.signal.strategy,
-              data.signal.id
-            );
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Signal analysis failed", err);
-    }
-  }, [
-    bars,
-    slot.symbol,
-    slot.tradingStyle,
-    slot.autoTradeEnabled,
-    slot.safetyStopActive,
-    slot.mode,
-    activePreset,
-    addSignal,
-    executeTrade,
-  ]);
-
-  useEffect(() => {
-    if (bars.length >= 30 && activePreset) {
-      runAnalysis();
-    }
-  }, [bars, activePreset, runAnalysis]);
-
-  const manualTrade = (side: "buy" | "sell") => {
+  const manualTrade = async (side: "buy" | "sell") => {
     const price = quote?.price ?? bars[bars.length - 1]?.close ?? 0;
     if (price <= 0) return;
-    executeTrade(side, price, "manual");
+    await executeSlotTrade({
+      slotId: slot.id,
+      symbol: slot.symbol,
+      side,
+      price,
+      strategy: "manual",
+      mode: slot.mode,
+      bars,
+    });
   };
 
   const slotTrades = trades.filter((t) => (t.chartSlot ?? "main") === slot.id);
@@ -261,7 +106,7 @@ export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
           Auto
         </button>
         <button
-          onClick={() => manualTrade("buy")}
+          onClick={() => void manualTrade("buy")}
           disabled={slot.safetyStopActive || loading || bars.length === 0}
           className="flex items-center gap-1 rounded bg-[var(--accent)] px-2 py-1 text-[10px] font-medium text-black disabled:opacity-40"
         >
@@ -269,7 +114,7 @@ export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
           Buy
         </button>
         <button
-          onClick={() => manualTrade("sell")}
+          onClick={() => void manualTrade("sell")}
           disabled={slot.safetyStopActive || loading || bars.length === 0}
           className="flex items-center gap-1 rounded bg-[var(--danger)] px-2 py-1 text-[10px] font-medium text-white disabled:opacity-40"
         >
@@ -327,11 +172,7 @@ export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
           value={`$${stats.totalPnl.toFixed(2)}`}
           positive={stats.totalPnl >= 0}
         />
-        <Stat
-          label="Open P&L"
-          value={`$${openPnl.toFixed(2)}`}
-          positive={openPnl >= 0}
-        />
+        <Stat label="Open P&L" value={`$${openPnl.toFixed(2)}`} positive={openPnl >= 0} />
         <Stat label="Trades" value={String(stats.totalTrades)} />
       </div>
     </div>
