@@ -11,3 +11,7 @@ export function getRiskEngine(chartSlot: string, settings: RiskSettings): RiskEn
   }
   return riskEngines.get(chartSlot)!;
 }
+
+export function resetAllRiskEngines(): void {
+  riskEngines.clear();
+}

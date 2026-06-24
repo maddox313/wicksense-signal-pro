@@ -1,10 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import dynamic from "next/dynamic";
 import { computePerformanceStats } from "@wicksense/core";
 import { useAppStore, EMPTY_SLOT_MARKET_DATA } from "@/lib/store";
 import type { MultiChartSlot } from "@/lib/store";
 import { executeSlotTrade } from "@/lib/autoTradeRunner";
+import { persistAutoTradeSlot } from "@/lib/auto-trade-client";
 import { ShoppingCart, DollarSign, Play, Pause, ShieldAlert } from "lucide-react";
 
 const TradingChart = dynamic(
@@ -27,6 +29,7 @@ interface ChartSlotPanelProps {
 
 export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
   const { trades, updateMultiChartSlot, clearMultiChartMarkers, slotMarketData } = useAppStore();
+  const [tradeBlockMessage, setTradeBlockMessage] = useState<string | null>(null);
 
   const marketData = slotMarketData[slot.id] ?? EMPTY_SLOT_MARKET_DATA;
   const { bars, quote, loading, fetchError } = marketData;
@@ -34,7 +37,7 @@ export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
   const manualTrade = async (side: "buy" | "sell") => {
     const price = quote?.price ?? bars[bars.length - 1]?.close ?? 0;
     if (price <= 0) return;
-    await executeSlotTrade({
+    const result = await executeSlotTrade({
       slotId: slot.id,
       symbol: slot.symbol,
       side,
@@ -43,6 +46,11 @@ export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
       mode: slot.mode,
       bars,
     });
+    if (result.skipped && result.reason) {
+      setTradeBlockMessage(result.reason);
+    } else if (result.ok) {
+      setTradeBlockMessage(null);
+    }
   };
 
   const slotTrades = trades.filter((t) => (t.chartSlot ?? "main") === slot.id);
@@ -92,9 +100,11 @@ export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
           ))}
         </div>
         <button
-          onClick={() =>
-            updateMultiChartSlot(slot.id, { autoTradeEnabled: !slot.autoTradeEnabled })
-          }
+          onClick={() => {
+            const next = !slot.autoTradeEnabled;
+            updateMultiChartSlot(slot.id, { autoTradeEnabled: next });
+            void persistAutoTradeSlot(slot.id, next);
+          }}
           disabled={slot.mode === "manual" || slot.safetyStopActive}
           className={`ml-auto flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium transition-colors ${
             slot.autoTradeEnabled
@@ -141,6 +151,12 @@ export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
       {fetchError && (
         <p className="border-b border-[var(--card-border)] px-3 py-1.5 text-[10px] text-[var(--danger)]">
           {fetchError}
+        </p>
+      )}
+
+      {tradeBlockMessage && (
+        <p className="border-b border-[var(--card-border)] px-3 py-1.5 text-[10px] text-[var(--danger)]">
+          {tradeBlockMessage}
         </p>
       )}
 

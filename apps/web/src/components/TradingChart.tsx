@@ -10,6 +10,7 @@ import {
   type IChartApi,
   type ISeriesApi,
   type CandlestickData,
+  type LineData,
   type Time,
   type ISeriesMarkersPluginApi,
 } from "lightweight-charts";
@@ -24,6 +25,14 @@ const INDICATORS = [
   { id: "bb", label: "Bollinger" },
 ] as const;
 
+const CHART_STYLES = [
+  { id: "candles", label: "Candles", compact: "C" },
+  { id: "heikin-ashi", label: "Heikin Ashi", compact: "HA" },
+  { id: "line", label: "Line", compact: "L" },
+] as const;
+
+export type ChartStyle = (typeof CHART_STYLES)[number]["id"];
+
 interface TradingChartProps {
   bars: OHLCV[];
   markers: ChartMarker[];
@@ -33,21 +42,63 @@ interface TradingChartProps {
   title?: string;
 }
 
-function normalizeBars(bars: OHLCV[]): CandlestickData<Time>[] {
+function sortUniqueBars(bars: OHLCV[]): OHLCV[] {
   const byTime = new Map<number, OHLCV>();
   for (const bar of bars) {
     byTime.set(bar.time, bar);
   }
-  return Array.from(byTime.values())
-    .sort((a, b) => a.time - b.time)
-    .map((b) => ({
-      time: b.time as Time,
-      open: b.open,
-      high: b.high,
-      low: b.low,
-      close: b.close,
-    }));
+  return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
 }
+
+function toCandleData(bars: OHLCV[]): CandlestickData<Time>[] {
+  return sortUniqueBars(bars).map((b) => ({
+    time: b.time as Time,
+    open: b.open,
+    high: b.high,
+    low: b.low,
+    close: b.close,
+  }));
+}
+
+/** Display-only transform — raw bars used for signals/trades stay unchanged. */
+function toHeikinAshiData(bars: OHLCV[]): CandlestickData<Time>[] {
+  const sorted = sortUniqueBars(bars);
+  if (sorted.length === 0) return [];
+
+  const result: CandlestickData<Time>[] = [];
+  let prevOpen = (sorted[0].open + sorted[0].close) / 2;
+  let prevClose = (sorted[0].open + sorted[0].high + sorted[0].low + sorted[0].close) / 4;
+
+  for (let i = 0; i < sorted.length; i++) {
+    const bar = sorted[i];
+    const haClose = (bar.open + bar.high + bar.low + bar.close) / 4;
+    const haOpen = i === 0 ? (bar.open + bar.close) / 2 : (prevOpen + prevClose) / 2;
+    const haHigh = Math.max(bar.high, haOpen, haClose);
+    const haLow = Math.min(bar.low, haOpen, haClose);
+
+    result.push({
+      time: bar.time as Time,
+      open: haOpen,
+      high: haHigh,
+      low: haLow,
+      close: haClose,
+    });
+
+    prevOpen = haOpen;
+    prevClose = haClose;
+  }
+
+  return result;
+}
+
+function toLineData(bars: OHLCV[]): LineData<Time>[] {
+  return sortUniqueBars(bars).map((b) => ({
+    time: b.time as Time,
+    value: b.close,
+  }));
+}
+
+type MainSeries = ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
 
 export function TradingChart({
   bars,
@@ -59,10 +110,12 @@ export function TradingChart({
 }: TradingChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const mainSeriesRef = useRef<MainSeries | null>(null);
+  const mainSeriesStyleRef = useRef<ChartStyle | null>(null);
   const overlayRefs = useRef<ISeriesApi<"Line">[]>([]);
   const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const [activeIndicators, setActiveIndicators] = useState<string[]>(["ema9", "ema21"]);
+  const [chartStyle, setChartStyle] = useState<ChartStyle>("candles");
   const [chartError, setChartError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -86,17 +139,7 @@ export function TradingChart({
         height,
       });
 
-      const candles = chart.addSeries(CandlestickSeries, {
-        upColor: "#10b981",
-        downColor: "#ef4444",
-        borderVisible: false,
-        wickUpColor: "#10b981",
-        wickDownColor: "#ef4444",
-      });
-
       chartRef.current = chart;
-      candleRef.current = candles;
-      markersPluginRef.current = createSeriesMarkers(candles, []);
       setChartError(null);
     } catch (err) {
       setChartError(err instanceof Error ? err.message : "Failed to initialize chart");
@@ -118,29 +161,62 @@ export function TradingChart({
       window.removeEventListener("resize", resize);
       markersPluginRef.current = null;
       overlayRefs.current = [];
-      candleRef.current = null;
+      mainSeriesRef.current = null;
+      mainSeriesStyleRef.current = null;
       chart?.remove();
       chartRef.current = null;
     };
   }, [height]);
 
   useEffect(() => {
-    if (!candleRef.current || !chartRef.current || bars.length === 0) return;
+    const chart = chartRef.current;
+    if (!chart || bars.length === 0) return;
 
     try {
-      const candleData = normalizeBars(bars);
-      if (candleData.length === 0) return;
+      if (mainSeriesRef.current && mainSeriesStyleRef.current !== chartStyle) {
+        chart.removeSeries(mainSeriesRef.current);
+        mainSeriesRef.current = null;
+        mainSeriesStyleRef.current = null;
+        markersPluginRef.current = null;
+      }
 
-      candleRef.current.setData(candleData);
+      if (!mainSeriesRef.current) {
+        if (chartStyle === "line") {
+          mainSeriesRef.current = chart.addSeries(LineSeries, {
+            color: "#10b981",
+            lineWidth: 2,
+            title: "Price",
+          });
+        } else {
+          mainSeriesRef.current = chart.addSeries(CandlestickSeries, {
+            upColor: "#10b981",
+            downColor: "#ef4444",
+            borderVisible: false,
+            wickUpColor: "#10b981",
+            wickDownColor: "#ef4444",
+          });
+        }
+        mainSeriesStyleRef.current = chartStyle;
+        markersPluginRef.current = createSeriesMarkers(mainSeriesRef.current, []);
+      }
 
-      overlayRefs.current.forEach((s) => chartRef.current?.removeSeries(s));
+      const mainSeries = mainSeriesRef.current;
+      if (chartStyle === "line") {
+        (mainSeries as ISeriesApi<"Line">).setData(toLineData(bars));
+      } else if (chartStyle === "heikin-ashi") {
+        (mainSeries as ISeriesApi<"Candlestick">).setData(toHeikinAshiData(bars));
+      } else {
+        (mainSeries as ISeriesApi<"Candlestick">).setData(toCandleData(bars));
+      }
+
+      overlayRefs.current.forEach((s) => chart.removeSeries(s));
       overlayRefs.current = [];
 
-      const sortedBars = [...bars].sort((a, b) => a.time - b.time);
+      const sortedBars = sortUniqueBars(bars);
       const closes = sortedBars.map((b) => b.close);
 
       if (activeIndicators.includes("ema9")) {
-        const series = chartRef.current.addSeries(LineSeries, {
+        const series = chart.addSeries(LineSeries, {
           color: "#3b82f6",
           lineWidth: 1,
           title: "EMA 9",
@@ -155,7 +231,7 @@ export function TradingChart({
       }
 
       if (activeIndicators.includes("ema21")) {
-        const series = chartRef.current.addSeries(LineSeries, {
+        const series = chart.addSeries(LineSeries, {
           color: "#a855f7",
           lineWidth: 1,
           title: "EMA 21",
@@ -171,15 +247,15 @@ export function TradingChart({
 
       if (activeIndicators.includes("bb")) {
         const { upper, lower, middle } = bollingerBands(closes);
-        for (const [values, color, title] of [
+        for (const [values, color, titleText] of [
           [upper, "#f59e0b", "BB Upper"],
           [middle, "#6b7280", "BB Mid"],
           [lower, "#f59e0b", "BB Lower"],
         ] as const) {
-          const series = chartRef.current.addSeries(LineSeries, {
+          const series = chart.addSeries(LineSeries, {
             color,
             lineWidth: 1,
-            title,
+            title: titleText,
           });
           series.setData(
             sortedBars
@@ -190,12 +266,12 @@ export function TradingChart({
         }
       }
 
-      chartRef.current.timeScale().fitContent();
+      chart.timeScale().fitContent();
       setChartError(null);
     } catch (err) {
       setChartError(err instanceof Error ? err.message : "Failed to render chart data");
     }
-  }, [bars, activeIndicators]);
+  }, [bars, activeIndicators, chartStyle]);
 
   useEffect(() => {
     if (!markersPluginRef.current) return;
@@ -211,7 +287,7 @@ export function TradingChart({
           text: m.label,
         }))
     );
-  }, [markers, bars]);
+  }, [markers, bars, chartStyle]);
 
   const toggleIndicator = (id: string) => {
     setActiveIndicators((prev) =>
@@ -236,6 +312,21 @@ export function TradingChart({
           <span className="text-sm font-medium">{title}</span>
         </div>
         <div className="flex flex-wrap items-center gap-1">
+          {CHART_STYLES.map(({ id, label, compact: shortLabel }) => (
+            <button
+              key={id}
+              onClick={() => setChartStyle(id)}
+              className={`rounded px-2 py-1 text-xs transition-colors ${
+                chartStyle === id
+                  ? "bg-[var(--accent)]/20 text-[var(--accent)]"
+                  : "bg-white/5 text-[var(--muted)] hover:text-white"
+              }`}
+              title={label}
+            >
+              {compact ? shortLabel : label}
+            </button>
+          ))}
+          <span className="mx-1 h-4 w-px bg-[var(--card-border)]" />
           {INDICATORS.map(({ id, label }) => (
             <button
               key={id}

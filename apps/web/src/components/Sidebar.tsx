@@ -8,6 +8,7 @@ import {
   ScanSearch,
   FlaskConical,
   BarChart3,
+  PieChart,
   User,
   Settings,
   Zap,
@@ -23,7 +24,8 @@ const NAV = [
   { href: "/multi-chart", label: "Multi-Chart", icon: LayoutGrid },
   { href: "/scanner", label: "Scanner", icon: ScanSearch },
   { href: "/backtest", label: "Backtest", icon: FlaskConical },
-  { href: "/performance", label: "Performance", icon: BarChart3 },
+  { href: "/performance", label: "Trade Analysis", icon: BarChart3 },
+  { href: "/performance-analysis", label: "Performance Analysis", icon: PieChart },
   { href: "/profile", label: "Profile", icon: User },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

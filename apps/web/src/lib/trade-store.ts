@@ -160,6 +160,12 @@ export async function upsertTrade(trade: Trade): Promise<Trade> {
   return rowToTrade(row);
 }
 
+export async function deleteTradesByMode(mode: TradeMode): Promise<number> {
+  const userId = await ensureTradeStoreReady();
+  const result = await prisma.trade.deleteMany({ where: { userId, mode } });
+  return result.count;
+}
+
 export async function updateTrade(
   id: string,
   updates: Partial<Trade>

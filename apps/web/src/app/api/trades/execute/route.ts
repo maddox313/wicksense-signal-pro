@@ -21,6 +21,8 @@ import {
   upsertTrade,
 } from "@/lib/trade-store";
 import { syncAlpacaPositions } from "@/lib/position-sync";
+import { loadTradingScheduleSettings } from "@/lib/trading-schedule-config";
+import { evaluateTradingSchedule } from "@wicksense/core";
 
 const executedSignalIds = new Set<string>();
 
@@ -65,6 +67,14 @@ export async function POST(req: NextRequest) {
     signalId?: string;
     chartSlot?: string;
   };
+
+  const scheduleCheck = evaluateTradingSchedule(loadTradingScheduleSettings());
+  if (!scheduleCheck.allowed) {
+    return NextResponse.json({
+      skipped: true,
+      reason: scheduleCheck.reason ?? "Outside allowed trading hours",
+    });
+  }
 
   await reconcileMode(mode);
 

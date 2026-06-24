@@ -1,6 +1,8 @@
 "use client";
 
 import { useAppStore } from "@/lib/store";
+import { persistAutoTradeSlot } from "@/lib/auto-trade-client";
+import { MAIN_CHART_SLOT } from "@/lib/chart-slots";
 import { ShieldAlert, Play, Pause, Hand, Bot } from "lucide-react";
 
 export function TradeControls() {
@@ -36,7 +38,11 @@ export function TradeControls() {
       </div>
 
       <button
-        onClick={() => setAutoTradeEnabled(!autoTradeEnabled)}
+        onClick={() => {
+          const next = !autoTradeEnabled;
+          setAutoTradeEnabled(next);
+          void persistAutoTradeSlot(MAIN_CHART_SLOT, next);
+        }}
         disabled={mode === "manual" || safetyStopActive}
         className={`mb-4 flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-medium transition-colors ${
           autoTradeEnabled

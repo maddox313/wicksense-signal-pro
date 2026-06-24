@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import dynamic from "next/dynamic";
 import { useAppStore, EMPTY_SLOT_MARKET_DATA } from "@/lib/store";
 import { TradeControls } from "@/components/TradeControls";
@@ -33,11 +34,12 @@ export default function ChartPage() {
 
   const marketData = slotMarketData[MAIN_CHART_SLOT] ?? EMPTY_SLOT_MARKET_DATA;
   const { bars, quote, loading, fetchError, dataSource } = marketData;
+  const [tradeBlockMessage, setTradeBlockMessage] = useState<string | null>(null);
 
   const manualTrade = async (side: "buy" | "sell") => {
     const price = quote?.price ?? bars[bars.length - 1]?.close ?? 0;
     if (price <= 0) return;
-    await executeSlotTrade({
+    const result = await executeSlotTrade({
       slotId: MAIN_CHART_SLOT,
       symbol,
       side,
@@ -46,6 +48,11 @@ export default function ChartPage() {
       mode,
       bars,
     });
+    if (result.skipped && result.reason) {
+      setTradeBlockMessage(result.reason);
+    } else if (result.ok) {
+      setTradeBlockMessage(null);
+    }
   };
 
   return (
@@ -60,6 +67,12 @@ export default function ChartPage() {
       {fetchError && (
         <p className="mb-4 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-4 py-2 text-sm text-[var(--danger)]">
           {fetchError}
+        </p>
+      )}
+
+      {tradeBlockMessage && (
+        <p className="mb-4 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-4 py-2 text-sm text-[var(--danger)]">
+          {tradeBlockMessage}
         </p>
       )}
 

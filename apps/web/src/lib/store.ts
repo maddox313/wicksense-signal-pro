@@ -11,7 +11,8 @@ import type {
   TradingStyle,
   OHLCV,
 } from "@wicksense/core";
-import { DEFAULT_RISK_SETTINGS, DEFAULT_ALERT_SETTINGS } from "@wicksense/core";
+import { DEFAULT_RISK_SETTINGS, DEFAULT_ALERT_SETTINGS, DEFAULT_TRADING_SCHEDULE } from "@wicksense/core";
+import type { TradingScheduleSettings } from "@wicksense/core";
 import { ALL_CHART_SLOT_IDS } from "./chart-slots";
 
 export interface SlotMarketData {
@@ -100,6 +101,7 @@ interface AppState {
   multiChartSlots: MultiChartSlot[];
   slotMarketData: Record<string, SlotMarketData>;
   syncStatus: SyncStatusState;
+  tradingSchedule: TradingScheduleSettings;
 
   setSymbol: (symbol: string) => void;
   setTimeframe: (tf: string) => void;
@@ -125,6 +127,7 @@ interface AppState {
   clearMultiChartMarkers: (slotId: string) => void;
   patchSlotMarketData: (slotId: string, patch: Partial<SlotMarketData>) => void;
   setSyncStatus: (status: Partial<SyncStatusState>) => void;
+  setTradingSchedule: (schedule: TradingScheduleSettings) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -146,6 +149,7 @@ export const useAppStore = create<AppState>((set) => ({
   multiChartSlots: DEFAULT_MULTI_SLOTS,
   slotMarketData: createInitialSlotMarketData(),
   syncStatus: { ...EMPTY_SYNC_STATUS },
+  tradingSchedule: { ...DEFAULT_TRADING_SCHEDULE },
 
   setSymbol: (symbol) => set({ symbol: symbol.toUpperCase() }),
   setTimeframe: (timeframe) => set({ timeframe }),
@@ -218,4 +222,5 @@ export const useAppStore = create<AppState>((set) => ({
     set((s) => ({
       syncStatus: { ...s.syncStatus, ...status },
     })),
+  setTradingSchedule: (tradingSchedule) => set({ tradingSchedule }),
 }));

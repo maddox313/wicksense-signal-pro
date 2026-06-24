@@ -1,17 +1,61 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useAppStore } from "@/lib/store";
-import { TrendingUp, Shield, Zap, BarChart3 } from "lucide-react";
+import { formatUsd } from "@/lib/account-utils";
+import { TrendingUp, Shield, Zap, BarChart3, Wallet } from "lucide-react";
+
+interface AccountSnapshot {
+  equity: number;
+  cash: number;
+  buyingPower: number;
+}
+
+interface BalanceResponse {
+  live: {
+    configured: boolean;
+    connected: boolean;
+    account: AccountSnapshot | null;
+    error: string | null;
+  };
+  updatedAt: string;
+}
 
 export default function DashboardPage() {
   const { performance, safetyStopActive, autoTradeEnabled, mode, trades } = useAppStore();
   const [mounted, setMounted] = useState(false);
+  const [liveBalance, setLiveBalance] = useState<BalanceResponse | null>(null);
 
-  useEffect(() => setMounted(true), []);
+  const fetchLiveBalance = useCallback(async () => {
+    try {
+      const res = await fetch("/api/account/balances");
+      if (!res.ok) return;
+      setLiveBalance(await res.json());
+    } catch {
+      setLiveBalance(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    setMounted(true);
+    void fetchLiveBalance();
+  }, [fetchLiveBalance]);
 
   const openTrades = trades.filter((t) => t.status === "open").length;
+
+  const live = liveBalance?.live;
+  const liveEquity = live?.connected && live.account ? live.account.equity : null;
+  const liveBalanceLabel =
+    !mounted || !liveBalance
+      ? "—"
+      : !live?.configured
+        ? "Not configured"
+        : !live.connected
+          ? "Disconnected"
+          : formatUsd(liveEquity ?? 0);
+  const liveBalanceColor: "accent" | "danger" | "muted" =
+    !live?.connected || !live?.configured ? "muted" : "accent";
 
   return (
     <div>
@@ -22,7 +66,20 @@ export default function DashboardPage() {
         </p>
       </header>
 
-      <div className="mb-8 grid grid-cols-4 gap-4">
+      <div className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
+        <Link href="/account" className="block transition-opacity hover:opacity-90">
+          <StatCard
+            icon={Wallet}
+            label="Live Balance"
+            value={liveBalanceLabel}
+            color={liveBalanceColor}
+            subtitle={
+              live?.connected && live.account
+                ? `Cash ${formatUsd(live.account.cash)}`
+                : live?.error ?? undefined
+            }
+          />
+        </Link>
         <StatCard
           icon={TrendingUp}
           label="Win Rate"
@@ -66,7 +123,13 @@ export default function DashboardPage() {
           <dl className="space-y-3 text-sm">
             <StatusRow label="Trading Mode" value={mode} />
             <StatusRow label="Auto Trade" value={autoTradeEnabled ? "Enabled" : "Disabled"} />
-            <StatusRow label="Broker" value="Alpaca (Paper)" />
+            <StatusRow
+              label="Live Account"
+              value={
+                live?.connected && liveEquity !== null ? formatUsd(liveEquity) : "Not connected"
+              }
+            />
+            <StatusRow label="Broker" value="Alpaca" />
             <StatusRow label="Markets" value="US Equities + ETFs" />
           </dl>
         </div>
@@ -80,11 +143,13 @@ function StatCard({
   label,
   value,
   color,
+  subtitle,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   value: string;
-  color: "accent" | "danger";
+  color: "accent" | "danger" | "muted";
+  subtitle?: string;
 }) {
   return (
     <div className="rounded-xl border border-[var(--card-border)] bg-[var(--card)] p-4">
@@ -93,6 +158,11 @@ function StatCard({
         <span className="text-xs">{label}</span>
       </div>
       <p className={`text-2xl font-bold text-[var(--${color})]`}>{value}</p>
+      {subtitle && (
+        <p className="mt-1 truncate text-[10px] text-[var(--muted)]" title={subtitle}>
+          {subtitle}
+        </p>
+      )}
     </div>
   );
 }

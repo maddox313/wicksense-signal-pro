@@ -157,3 +157,33 @@ export const DEFAULT_LIVE_TRADING_SETTINGS: LiveTradingSettings = {
   brokerStopLossEnabled: true,
   stopLossPercent: 2,
 };
+
+export type WeekdayKey = "sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat";
+
+export interface TradingScheduleSettings {
+  unrestricted: boolean;
+  allowOvernight: boolean;
+  allowAfterHours: boolean;
+  days: Record<WeekdayKey, boolean>;
+  /** 24-hour HH:mm in US Eastern Time */
+  startTime: string;
+  /** 24-hour HH:mm in US Eastern Time */
+  endTime: string;
+}
+
+export const DEFAULT_TRADING_SCHEDULE: TradingScheduleSettings = {
+  unrestricted: false,
+  allowOvernight: false,
+  allowAfterHours: false,
+  days: {
+    sun: false,
+    mon: true,
+    tue: true,
+    wed: true,
+    thu: true,
+    fri: true,
+    sat: false,
+  },
+  startTime: "09:30",
+  endTime: "16:00",
+};

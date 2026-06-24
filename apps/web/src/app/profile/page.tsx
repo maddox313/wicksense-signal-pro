@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useAppStore } from "@/lib/store";
 import type { AlertSettings } from "@wicksense/core";
 import { User, Mail, Phone, Save, Bell, CheckCircle, AlertCircle } from "lucide-react";
+import { TradingScheduleSection } from "@/components/TradingScheduleSection";
 
 interface ProfileData {
   displayName: string;
@@ -222,6 +223,8 @@ export default function ProfilePage() {
           </div>
         </div>
       </div>
+
+      <TradingScheduleSection />
     </div>
   );
 }

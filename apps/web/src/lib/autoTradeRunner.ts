@@ -1,4 +1,5 @@
 import type { OHLCV, TradeMode, TradingStyle } from "@wicksense/core";
+import { evaluateTradingSchedule } from "@wicksense/core";
 import { MAIN_CHART_SLOT } from "./chart-slots";
 import { useAppStore } from "./store";
 
@@ -89,7 +90,7 @@ export async function executeSlotTrade(params: {
   mode: TradeMode;
   signalId?: string;
   bars: OHLCV[];
-}): Promise<{ ok: boolean; skipped?: boolean }> {
+}): Promise<{ ok: boolean; skipped?: boolean; reason?: string }> {
   const { riskSettings, alertSettings } = useAppStore.getState();
   const { slotId, symbol, side, price, strategy, mode, signalId, bars } = params;
 
@@ -110,7 +111,12 @@ export async function executeSlotTrade(params: {
       }),
     });
     const data = await res.json();
-    if (data.skipped) return { ok: false, skipped: true };
+    if (data.skipped) {
+      if (data.reason?.includes("trading hours") || data.reason?.includes("Trading is not")) {
+        console.warn(`[AutoTrade:${slotId}] ${data.reason}`);
+      }
+      return { ok: false, skipped: true, reason: data.reason };
+    }
     if (!res.ok) {
       console.error(`[AutoTrade:${slotId}]`, data.error ?? "Trade failed");
       return { ok: false };
@@ -209,6 +215,9 @@ export async function runSlotCycle(
     if (!autoTradeEnabled || safetyStopActive || mode === "manual") return;
 
     if (lastSignalBySlot.get(slotId) === data.signal.id) return;
+
+    const scheduleCheck = evaluateTradingSchedule(store.tradingSchedule);
+    if (!scheduleCheck.allowed) return;
 
     lastSignalBySlot.set(slotId, data.signal.id);
     await executeSlotTrade({
