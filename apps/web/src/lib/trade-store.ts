@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import type { Trade as PrismaTrade } from "@prisma/client";
 import type { Trade, TradeMode } from "@wicksense/core";
+import { isAccountSyncTrade } from "@wicksense/core";
 import { prisma } from "@/lib/db";
 import { ensureDefaultUserId } from "@/lib/default-user";
 
@@ -26,6 +27,8 @@ function rowToTrade(row: PrismaTrade): Trade {
     strategy: row.strategy,
     status: row.status as Trade["status"],
     chartSlot: row.chartSlot ?? undefined,
+    timeframe: row.timeframe ?? undefined,
+    signalId: row.signalId ?? undefined,
     stopLossPrice: row.stopLossPrice ?? undefined,
     alpacaOrderId: row.alpacaOrderId ?? undefined,
     alpacaStopOrderId: row.alpacaStopOrderId ?? undefined,
@@ -49,6 +52,8 @@ function tradeToRow(trade: Trade, userId: string) {
     strategy: trade.strategy,
     status: trade.status,
     chartSlot: trade.chartSlot ?? null,
+    timeframe: trade.timeframe ?? null,
+    signalId: trade.signalId ?? null,
     stopLossPrice: trade.stopLossPrice ?? null,
     alpacaOrderId: trade.alpacaOrderId ?? null,
     alpacaStopOrderId: trade.alpacaStopOrderId ?? null,
@@ -148,6 +153,79 @@ export async function hasOpenAlpacaPosition(
   side: Trade["side"] = "buy"
 ): Promise<boolean> {
   return (await getOpenTrades(mode)).some((t) => t.symbol === symbol && t.side === side);
+}
+
+export async function deleteTrade(id: string): Promise<boolean> {
+  await ensureTradeStoreReady();
+  try {
+    await prisma.trade.delete({ where: { id } });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Remove alpaca-sync imports superseded by an app-created trade for the same position. */
+export async function deleteSyncImportsForPosition(
+  symbol: string,
+  side: Trade["side"],
+  mode: TradeMode
+): Promise<number> {
+  const open = await getOpenTrades(mode);
+  let removed = 0;
+  for (const trade of open) {
+    if (
+      trade.symbol === symbol &&
+      trade.side === side &&
+      isAccountSyncTrade(trade)
+    ) {
+      if (await deleteTrade(trade.id)) removed++;
+    }
+  }
+  return removed;
+}
+
+export async function findLatestStrategyAttribution(
+  symbol: string,
+  side: Trade["side"],
+  mode: TradeMode
+): Promise<{
+  strategy: string;
+  chartSlot: string;
+  signalId?: string;
+  timeframe?: string;
+  entryTime: number;
+} | null> {
+  const userId = await ensureTradeStoreReady();
+  const rows = await prisma.trade.findMany({
+    where: {
+      userId,
+      symbol,
+      side,
+      mode,
+      NOT: {
+        OR: [{ strategy: "alpaca-sync" }, { strategy: { startsWith: "closed:" } }],
+      },
+    },
+    orderBy: { entryTime: "desc" },
+    take: 5,
+  });
+
+  for (const row of rows) {
+    const trade = rowToTrade(row);
+    if (isAccountSyncTrade(trade)) continue;
+    const strategy = trade.strategy.trim();
+    if (!strategy) continue;
+    return {
+      strategy,
+      chartSlot: trade.chartSlot ?? "main",
+      signalId: trade.signalId,
+      timeframe: trade.timeframe,
+      entryTime: trade.entryTime,
+    };
+  }
+
+  return null;
 }
 
 export async function upsertTrade(trade: Trade): Promise<Trade> {

@@ -31,7 +31,17 @@ export async function POST(req: NextRequest) {
     "buy",
     message,
     testSettings,
-    { email: profile.email || undefined, phone: profile.phone || undefined }
+    { email: profile.email || undefined, phone: profile.phone || undefined },
+    {
+      symbol: "AAPL",
+      quantity: 11,
+      entryPrice: 186.54,
+      strategy: "ema-crossover",
+      timeframe: "5m",
+      mode: "paper",
+      timestamp: Date.now(),
+      reason: message,
+    }
   );
 
   return NextResponse.json({

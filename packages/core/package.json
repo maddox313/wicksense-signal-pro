@@ -6,7 +6,8 @@
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test:schedule": "node --experimental-strip-types --test src/trading-schedule.test.ts"
+    "test:schedule": "node --experimental-strip-types --test src/trading-schedule.test.ts",
+    "test:breakdown": "node --experimental-strip-types --test src/strategy-breakdown.test.ts"
   },
   "devDependencies": {
     "typescript": "^5.8.2"

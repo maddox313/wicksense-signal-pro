@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { computePerformanceStats } from "@wicksense/core";
+import { computePerformanceStats, isAppStrategyTrade } from "@wicksense/core";
 import type { RiskSettings, AlertSettings, Trade, TradeMode } from "@wicksense/core";
 import {
   placeOrder,
@@ -7,8 +7,10 @@ import {
   placeLiveStopLossOrder,
   cancelLiveStopOrdersForSymbol,
 } from "@/lib/alpaca";
-import { sendAlert } from "@/lib/alerts";
-import { getUserContact } from "@/lib/user-config";
+import { sendAlert, type TradeAlertDetails } from "@/lib/alerts";
+import { logDuplicateSignalBlocked } from "@/lib/signal-dedupe-log";
+import { getUserContact, loadUserProfile } from "@/lib/user-config";
+import { saveStrategyAttribution } from "@/lib/strategy-attribution";
 import {
   loadLiveTradingSettings,
   computeStopLossPrice,
@@ -19,6 +21,7 @@ import {
   getOpenTrades,
   findOpenTrade,
   upsertTrade,
+  deleteSyncImportsForPosition,
 } from "@/lib/trade-store";
 import { syncAlpacaPositions } from "@/lib/position-sync";
 import { loadTradingScheduleSettings } from "@/lib/trading-schedule-config";
@@ -32,6 +35,30 @@ function getEngine(chartSlot: string, settings: RiskSettings) {
 
 function signalKey(chartSlot: string, signalId: string) {
   return `${chartSlot}:${signalId}`;
+}
+
+function blockIfDuplicateSignal(params: {
+  chartSlot: string;
+  signalId?: string;
+  symbol: string;
+  timeframe?: string;
+  strategy: string;
+  side: string;
+  signalBarTime?: number;
+}): boolean {
+  if (!params.signalId) return false;
+  if (!executedSignalIds.has(signalKey(params.chartSlot, params.signalId))) return false;
+
+  logDuplicateSignalBlocked({
+    slot: params.chartSlot,
+    symbol: params.symbol,
+    timeframe: params.timeframe ?? "—",
+    strategy: params.strategy,
+    side: params.side,
+    barTime: params.signalBarTime ?? 0,
+    signalId: params.signalId,
+  });
+  return true;
 }
 
 function isAlpacaMode(mode: TradeMode): mode is "paper" | "live" {
@@ -56,6 +83,9 @@ export async function POST(req: NextRequest) {
     alertSettings,
     signalId,
     chartSlot = "main",
+    timeframe,
+    signalReason,
+    signalBarTime,
   } = body as {
     symbol: string;
     side: "buy" | "sell";
@@ -66,6 +96,9 @@ export async function POST(req: NextRequest) {
     alertSettings: AlertSettings;
     signalId?: string;
     chartSlot?: string;
+    timeframe?: string;
+    signalReason?: string;
+    signalBarTime?: number;
   };
 
   const scheduleCheck = evaluateTradingSchedule(loadTradingScheduleSettings());
@@ -80,13 +113,28 @@ export async function POST(req: NextRequest) {
 
   const engine = getEngine(chartSlot, riskSettings);
   const openBuy = await findOpenTrade(symbol, mode, chartSlot, "buy");
+  const profile = loadUserProfile();
   const contact = getUserContact();
+  const effectiveAlertSettings: AlertSettings = {
+    ...alertSettings,
+    ...profile.alertSettings,
+  };
 
   if (side === "sell") {
     if (!openBuy) {
       return NextResponse.json({ skipped: true, reason: "No open position to sell" });
     }
-    if (signalId && executedSignalIds.has(signalKey(chartSlot, signalId))) {
+    if (
+      blockIfDuplicateSignal({
+        chartSlot,
+        signalId,
+        symbol,
+        timeframe,
+        strategy,
+        side,
+        signalBarTime,
+      })
+    ) {
       return NextResponse.json({ skipped: true, reason: "Signal already traded" });
     }
 
@@ -122,8 +170,18 @@ export async function POST(req: NextRequest) {
       "default",
       side,
       `${side.toUpperCase()} ${openBuy.quantity} ${symbol} @ $${price.toFixed(2)} (${strategy})`,
-      alertSettings,
-      contact
+      effectiveAlertSettings,
+      contact,
+      {
+        symbol,
+        quantity: openBuy.quantity,
+        entryPrice: price,
+        strategy,
+        timeframe: timeframe ?? openBuy.timeframe,
+        mode,
+        timestamp: Date.now(),
+        reason: signalReason,
+      } satisfies TradeAlertDetails
     );
 
     const allTrades = await getAllTrades();
@@ -136,17 +194,32 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  if (signalId && executedSignalIds.has(signalKey(chartSlot, signalId))) {
+  if (
+    blockIfDuplicateSignal({
+      chartSlot,
+      signalId,
+      symbol,
+      timeframe,
+      strategy,
+      side,
+      signalBarTime,
+    })
+  ) {
     return NextResponse.json({ skipped: true, reason: "Signal already traded" });
   }
 
-  if (isAlpacaMode(mode) && (await findOpenTrade(symbol, mode, undefined, "buy"))) {
-    const existing = await findOpenTrade(symbol, mode);
-    return NextResponse.json({
-      skipped: true,
-      reason: "Alpaca already has an open position for this symbol",
-      trade: existing,
-    });
+  if (isAlpacaMode(mode)) {
+    const existing = await findOpenTrade(symbol, mode, undefined, "buy");
+    if (existing) {
+      if (isAppStrategyTrade(existing)) {
+        return NextResponse.json({
+          skipped: true,
+          reason: "Alpaca already has an open position for this symbol",
+          trade: existing,
+        });
+      }
+      await deleteSyncImportsForPosition(symbol, "buy", mode);
+    }
   }
 
   if (openBuy) {
@@ -222,6 +295,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  await deleteSyncImportsForPosition(symbol, "buy", mode);
+
   const trade: Trade = {
     id: signalId
       ? `trade-${chartSlot}-${signalId}`
@@ -235,11 +310,28 @@ export async function POST(req: NextRequest) {
     strategy,
     status: "open",
     chartSlot,
+    timeframe,
+    signalId,
     stopLossPrice: mode === "live" && liveSettings.brokerStopLossEnabled ? stopLoss : undefined,
     alpacaOrderId,
     alpacaStopOrderId,
   };
-  await upsertTrade(trade);
+
+  saveStrategyAttribution(symbol, "buy", mode, {
+    strategy,
+    chartSlot,
+    signalId,
+    timeframe,
+    entryTime: trade.entryTime,
+  });
+
+  let dbError: string | undefined;
+  try {
+    await upsertTrade(trade);
+  } catch (err) {
+    dbError = err instanceof Error ? err.message : String(err);
+    console.error("[execute] Trade save failed after broker fill:", dbError);
+  }
 
   if (signalId) executedSignalIds.add(signalKey(chartSlot, signalId));
 
@@ -248,16 +340,34 @@ export async function POST(req: NextRequest) {
       ? ` · Stop @ $${stopLoss.toFixed(2)}`
       : "";
 
-  await sendAlert(
+  const alertResults = await sendAlert(
     "default",
     side,
     `${side.toUpperCase()} ${quantity} ${symbol} @ $${price.toFixed(2)} (${strategy})${stopNote}`,
-    alertSettings,
-    contact
+    effectiveAlertSettings,
+    contact,
+    {
+      symbol,
+      quantity,
+      entryPrice: price,
+      strategy,
+      timeframe,
+      mode,
+      timestamp: Date.now(),
+      reason: signalReason,
+      stopLossPrice:
+        mode === "live" && liveSettings.brokerStopLossEnabled ? stopLoss : undefined,
+    } satisfies TradeAlertDetails
   );
 
   if (engine.isSafetyStopActive()) {
-    await sendAlert("default", "safety_stop", "Safety stop triggered — auto trading paused", alertSettings, contact);
+    await sendAlert(
+      "default",
+      "safety_stop",
+      "Safety stop triggered — auto trading paused",
+      effectiveAlertSettings,
+      contact
+    );
   }
 
   if (isAlpacaMode(mode)) {
@@ -265,9 +375,27 @@ export async function POST(req: NextRequest) {
   }
 
   const allTrades = await getAllTrades();
+  if (dbError) {
+    return NextResponse.json(
+      {
+        error: `Trade filled on broker but database save failed: ${dbError}`,
+        trade,
+        skipped: false,
+        partial: true,
+        alertResults,
+        accountEquity,
+        consecutiveLosses: engine.getConsecutiveLosses(),
+        safetyStopTriggered: engine.isSafetyStopActive(),
+        performance: computePerformanceStats(allTrades),
+      },
+      { status: 500 }
+    );
+  }
+
   return NextResponse.json({
     trade,
     skipped: false,
+    alertResults,
     accountEquity,
     consecutiveLosses: engine.getConsecutiveLosses(),
     safetyStopTriggered: engine.isSafetyStopActive(),

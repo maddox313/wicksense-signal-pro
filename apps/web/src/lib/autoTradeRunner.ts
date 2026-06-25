@@ -1,7 +1,25 @@
 import type { OHLCV, TradeMode, TradingStyle } from "@wicksense/core";
-import { evaluateTradingSchedule } from "@wicksense/core";
+import {
+  detectCurrentBarSignals,
+  detectRecentSignal,
+  evaluateTradingSchedule,
+} from "@wicksense/core";
 import { MAIN_CHART_SLOT } from "./chart-slots";
 import { useAppStore } from "./store";
+import {
+  bootstrapGeneratedFromSignals,
+  recordSignalActivity,
+  recordSignalActivities,
+} from "./signal-activity-store";
+import {
+  recordDetectError,
+  clearDetectError,
+  recordSlotScan,
+  recordStrategyConverted,
+  recordStrategyRejected,
+} from "./strategy-engine-telemetry";
+import { resolveActivePreset } from "./presets-client";
+import { logDuplicateSignalBlocked } from "./signal-dedupe-log";
 
 export const AUTO_TRADE_POLL_MS = 30_000;
 
@@ -90,9 +108,24 @@ export async function executeSlotTrade(params: {
   mode: TradeMode;
   signalId?: string;
   bars: OHLCV[];
+  timeframe?: string;
+  signalReason?: string;
+  signalBarTime?: number;
 }): Promise<{ ok: boolean; skipped?: boolean; reason?: string }> {
   const { riskSettings, alertSettings } = useAppStore.getState();
-  const { slotId, symbol, side, price, strategy, mode, signalId, bars } = params;
+  const {
+    slotId,
+    symbol,
+    side,
+    price,
+    strategy,
+    mode,
+    signalId,
+    bars,
+    timeframe,
+    signalReason,
+    signalBarTime,
+  } = params;
 
   try {
     const res = await fetch("/api/trades/execute", {
@@ -108,6 +141,9 @@ export async function executeSlotTrade(params: {
         alertSettings,
         signalId,
         chartSlot: slotId,
+        timeframe,
+        signalReason,
+        signalBarTime,
       }),
     });
     const data = await res.json();
@@ -118,8 +154,26 @@ export async function executeSlotTrade(params: {
       return { ok: false, skipped: true, reason: data.reason };
     }
     if (!res.ok) {
+      const store = useAppStore.getState();
+      if (data.trade) {
+        store.addTrade(data.trade);
+        const barTime = bars[bars.length - 1]?.time ?? Math.floor(Date.now() / 1000);
+        const marker = {
+          id: signalId ?? data.trade.id ?? `${slotId}-${side}-${Date.now()}`,
+          time: barTime,
+          price,
+          side,
+          label: side === "buy" ? "BUY" : "SELL",
+          strategy,
+        } as const;
+        if (slotId === MAIN_CHART_SLOT) {
+          store.addMarker(marker);
+        } else {
+          store.addMultiChartMarker(slotId, marker);
+        }
+      }
       console.error(`[AutoTrade:${slotId}]`, data.error ?? "Trade failed");
-      return { ok: false };
+      return { ok: false, reason: data.error ?? "Trade failed" };
     }
 
     const barTime = bars[bars.length - 1]?.time ?? Math.floor(Date.now() / 1000);
@@ -158,7 +212,58 @@ export async function executeSlotTrade(params: {
     return { ok: true };
   } catch (err) {
     console.error(`[AutoTrade:${slotId}] Trade execution failed`, err);
-    return { ok: false };
+    return { ok: false, reason: err instanceof Error ? err.message : "Trade execution failed" };
+  }
+}
+
+const barsFetchInFlight = new Map<string, Promise<FetchBarsResult>>();
+
+/** Fetch OHLCV for a chart slot and update the store — independent of auto-trade cycles. */
+export async function refreshSlotBarsOnly(
+  slotId: string,
+  symbol: string,
+  timeframe: string
+): Promise<FetchBarsResult> {
+  const fetchKey = `${slotId}:${symbol}:${timeframe}`;
+  const inFlight = barsFetchInFlight.get(fetchKey);
+  if (inFlight) return inFlight;
+
+  const promise = (async (): Promise<FetchBarsResult> => {
+    const store = useAppStore.getState();
+    const existingBars = store.slotMarketData[slotId]?.bars ?? [];
+    if (existingBars.length === 0) {
+      store.patchSlotMarketData(slotId, { loading: true, refreshing: false });
+    } else {
+      store.patchSlotMarketData(slotId, { refreshing: true });
+    }
+
+    try {
+      const result = await fetchSlotBars(symbol, timeframe);
+      store.patchSlotMarketData(slotId, {
+        bars: result.bars,
+        quote: result.quote,
+        dataSource: result.dataSource,
+        fetchError: result.fetchError,
+        loading: false,
+        refreshing: false,
+      });
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load chart data";
+      store.patchSlotMarketData(slotId, {
+        loading: false,
+        refreshing: false,
+        fetchError: message,
+      });
+      return { bars: [], dataSource: null, fetchError: message };
+    }
+  })();
+
+  barsFetchInFlight.set(fetchKey, promise);
+  try {
+    return await promise;
+  } finally {
+    barsFetchInFlight.delete(fetchKey);
   }
 }
 
@@ -177,50 +282,194 @@ export async function runSlotCycle(
     lastSignalBySlot.delete(slotId);
   }
 
-  store.patchSlotMarketData(slotId, { loading: true });
+  const { bars } = await refreshSlotBarsOnly(slotId, symbol, timeframe);
 
-  const { bars, quote, dataSource, fetchError } = await fetchSlotBars(symbol, timeframe);
-  store.patchSlotMarketData(slotId, {
-    bars,
-    quote,
-    dataSource,
-    fetchError,
-    loading: false,
-  });
+  if (bars.length < 30) {
+    recordSlotScan({
+      chartSlot: slotId,
+      symbol,
+      timeframe,
+      barCount: bars.length,
+      presetId: null,
+      presetStrategies: [],
+      barSignalCount: 0,
+      strategiesFired: [],
+      pickedStrategy: null,
+      outcome: "no_bars",
+      detail: `Only ${bars.length} bars (need 30+)`,
+    });
+    return;
+  }
 
-  if (bars.length < 30) return;
+  const activePreset = resolveActivePreset();
+  if (!activePreset) {
+    recordSlotScan({
+      chartSlot: slotId,
+      symbol,
+      timeframe,
+      barCount: bars.length,
+      presetId: null,
+      presetStrategies: [],
+      barSignalCount: 0,
+      strategiesFired: [],
+      pickedStrategy: null,
+      outcome: "no_preset",
+      detail: "No strategy preset loaded",
+    });
+    return;
+  }
 
-  const activePreset =
-    store.presets.find((p) => p.id === store.activePresetId) ?? store.presets[0];
-  if (!activePreset) return;
+  const activityOpts = { chartSlot: slotId, mode };
 
   try {
-    const res = await fetch("/api/signals/detect", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const tf = timeframe || "5m";
+    const signal = detectRecentSignal(
+      symbol,
+      bars,
+      activePreset.strategies,
+      tradingStyle,
+      undefined,
+      tf
+    );
+    const barSignals = detectCurrentBarSignals(
+      symbol,
+      bars,
+      activePreset.strategies,
+      tradingStyle,
+      tf
+    );
+    const data = { signal, barSignals };
+    const strategiesFired = [...new Set<string>(barSignals.map((s) => s.strategy))];
+    clearDetectError();
+
+    if (barSignals.length > 0) {
+      recordSignalActivities(barSignals, "generated", activityOpts);
+    }
+
+    if (!data.signal) {
+      recordSlotScan({
+        chartSlot: slotId,
         symbol,
-        bars,
-        strategyIds: activePreset.strategies,
-        style: tradingStyle,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) return;
+        timeframe,
+        barCount: bars.length,
+        presetId: activePreset.id,
+        presetStrategies: activePreset.strategies,
+        barSignalCount: barSignals.length,
+        strategiesFired,
+        pickedStrategy: null,
+        outcome: strategiesFired.length > 0 ? "signal_seen" : "no_signal",
+        detail: strategiesFired.length > 0 ? "Bar signals only" : "No strategy match",
+      });
+      return;
+    }
 
-    if (!data.signal) return;
-
+    recordSignalActivity(data.signal, "generated", activityOpts);
     store.addSignal(data.signal);
 
-    if (!autoTradeEnabled || safetyStopActive || mode === "manual") return;
+    const rejectSignal = (reason: string) => {
+      recordSignalActivity(data.signal, "rejected", { ...activityOpts, reason });
+      recordStrategyRejected(data.signal.strategy);
+    };
 
-    if (lastSignalBySlot.get(slotId) === data.signal.id) return;
+    if (!autoTradeEnabled) {
+      rejectSignal("Auto trade disabled");
+      recordSlotScan({
+        chartSlot: slotId,
+        symbol,
+        timeframe,
+        barCount: bars.length,
+        presetId: activePreset.id,
+        presetStrategies: activePreset.strategies,
+        barSignalCount: barSignals.length,
+        strategiesFired,
+        pickedStrategy: data.signal.strategy,
+        outcome: "signal_seen",
+        detail: "Auto trade disabled",
+      });
+      return;
+    }
+    if (safetyStopActive) {
+      rejectSignal("Safety stop active");
+      recordSlotScan({
+        chartSlot: slotId,
+        symbol,
+        timeframe,
+        barCount: bars.length,
+        presetId: activePreset.id,
+        presetStrategies: activePreset.strategies,
+        barSignalCount: barSignals.length,
+        strategiesFired,
+        pickedStrategy: data.signal.strategy,
+        outcome: "signal_seen",
+        detail: "Safety stop active",
+      });
+      return;
+    }
+    if (mode === "manual") {
+      rejectSignal("Manual mode");
+      recordSlotScan({
+        chartSlot: slotId,
+        symbol,
+        timeframe,
+        barCount: bars.length,
+        presetId: activePreset.id,
+        presetStrategies: activePreset.strategies,
+        barSignalCount: barSignals.length,
+        strategiesFired,
+        pickedStrategy: data.signal.strategy,
+        outcome: "signal_seen",
+        detail: "Manual mode",
+      });
+      return;
+    }
+
+    if (lastSignalBySlot.get(slotId) === data.signal.id) {
+      logDuplicateSignalBlocked({
+        slot: slotId,
+        symbol,
+        timeframe,
+        strategy: data.signal.strategy,
+        side: data.signal.side,
+        barTime: data.signal.time,
+        signalId: data.signal.id,
+      });
+      recordSlotScan({
+        chartSlot: slotId,
+        symbol,
+        timeframe,
+        barCount: bars.length,
+        presetId: activePreset.id,
+        presetStrategies: activePreset.strategies,
+        barSignalCount: barSignals.length,
+        strategiesFired,
+        pickedStrategy: data.signal.strategy,
+        outcome: "signal_seen",
+        detail: "Duplicate signal (already processed)",
+      });
+      return;
+    }
 
     const scheduleCheck = evaluateTradingSchedule(store.tradingSchedule);
-    if (!scheduleCheck.allowed) return;
+    if (!scheduleCheck.allowed) {
+      rejectSignal(scheduleCheck.reason ?? "Outside trading schedule");
+      recordSlotScan({
+        chartSlot: slotId,
+        symbol,
+        timeframe,
+        barCount: bars.length,
+        presetId: activePreset.id,
+        presetStrategies: activePreset.strategies,
+        barSignalCount: barSignals.length,
+        strategiesFired,
+        pickedStrategy: data.signal.strategy,
+        outcome: "signal_seen",
+        detail: scheduleCheck.reason ?? "Outside trading schedule",
+      });
+      return;
+    }
 
     lastSignalBySlot.set(slotId, data.signal.id);
-    await executeSlotTrade({
+    const result = await executeSlotTrade({
       slotId,
       symbol,
       side: data.signal.side,
@@ -229,8 +478,48 @@ export async function runSlotCycle(
       mode,
       signalId: data.signal.id,
       bars,
+      timeframe,
+      signalReason: data.signal.reason,
+      signalBarTime: data.signal.time,
     });
+
+    if (result.skipped || (!result.ok && result.reason)) {
+      rejectSignal(result.reason ?? "Trade skipped by filter");
+      recordSlotScan({
+        chartSlot: slotId,
+        symbol,
+        timeframe,
+        barCount: bars.length,
+        presetId: activePreset.id,
+        presetStrategies: activePreset.strategies,
+        barSignalCount: barSignals.length,
+        strategiesFired,
+        pickedStrategy: data.signal.strategy,
+        outcome: "signal_seen",
+        detail: result.reason ?? "Trade skipped by filter",
+      });
+      return;
+    }
+
+    if (result.ok) {
+      recordSignalActivity(data.signal, "converted", activityOpts);
+      recordStrategyConverted(data.signal.strategy);
+      recordSlotScan({
+        chartSlot: slotId,
+        symbol,
+        timeframe,
+        barCount: bars.length,
+        presetId: activePreset.id,
+        presetStrategies: activePreset.strategies,
+        barSignalCount: barSignals.length,
+        strategiesFired,
+        pickedStrategy: data.signal.strategy,
+        outcome: "signal_traded",
+      });
+    }
   } catch (err) {
+    const message = err instanceof Error ? err.message : "Signal analysis failed";
+    recordDetectError(message);
     console.error(`[AutoTrade:${slotId}] Signal analysis failed`, err);
   }
 }

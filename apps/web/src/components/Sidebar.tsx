@@ -9,6 +9,7 @@ import {
   FlaskConical,
   BarChart3,
   PieChart,
+  ListTree,
   User,
   Settings,
   Zap,
@@ -26,6 +27,7 @@ const NAV = [
   { href: "/backtest", label: "Backtest", icon: FlaskConical },
   { href: "/performance", label: "Trade Analysis", icon: BarChart3 },
   { href: "/performance-analysis", label: "Performance Analysis", icon: PieChart },
+  { href: "/strategy-performance", label: "Strategy Breakdown", icon: ListTree },
   { href: "/profile", label: "Profile", icon: User },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

@@ -1,5 +1,11 @@
 import type { AlertSettings } from "@wicksense/core";
 import nodemailer from "nodemailer";
+import {
+  buildAlertEmailContent,
+  type TradeAlertDetails,
+} from "@/lib/alert-email-template";
+
+export type { TradeAlertDetails };
 
 export interface AlertProviderStatus {
   email: "resend" | "sendgrid" | "smtp" | "none";
@@ -26,7 +32,8 @@ export async function sendAlert(
   type: "buy" | "sell" | "stop_loss" | "safety_stop",
   message: string,
   settings: AlertSettings,
-  contact: { email?: string; phone?: string }
+  contact: { email?: string; phone?: string },
+  details?: TradeAlertDetails
 ) {
   const channels: { channel: string; sent: boolean; error?: string }[] = [];
 
@@ -36,7 +43,10 @@ export async function sendAlert(
     (type === "stop_loss" && settings.onStopLoss) ||
     (type === "safety_stop" && settings.onSafetyStop);
 
-  if (!typeEnabled) return channels;
+  if (!typeEnabled) {
+    console.warn(`[Alert skipped] ${type} alerts disabled in settings`);
+    return channels;
+  }
 
   if (settings.pushEnabled) {
     channels.push({ channel: "push", sent: true });
@@ -44,13 +54,17 @@ export async function sendAlert(
 
   if (settings.emailEnabled && contact.email) {
     try {
-      await sendEmail(contact.email, `WickSense Alert: ${type.toUpperCase()}`, message);
+      const emailContent = buildAlertEmailContent(type, message, details);
+      await sendEmail(contact.email, emailContent.subject, emailContent.text, emailContent.html);
       channels.push({ channel: "email", sent: true });
     } catch (err) {
       const error = err instanceof Error ? err.message : "Email send failed";
       console.error("[Alert email error]", error);
       channels.push({ channel: "email", sent: false, error });
     }
+  } else if (settings.emailEnabled && !contact.email) {
+    console.warn("[Alert skipped] Email enabled but no address in Profile");
+    channels.push({ channel: "email", sent: false, error: "No email address in Profile" });
   }
 
   if (settings.smsEnabled && contact.phone) {
@@ -67,26 +81,26 @@ export async function sendAlert(
   return channels;
 }
 
-async function sendEmail(to: string, subject: string, body: string) {
+async function sendEmail(to: string, subject: string, text: string, html: string) {
   if (process.env.RESEND_API_KEY) {
-    await sendEmailViaResend(to, subject, body);
+    await sendEmailViaResend(to, subject, text, html);
     return;
   }
   if (process.env.SENDGRID_API_KEY) {
-    await sendEmailViaSendGrid(to, subject, body);
+    await sendEmailViaSendGrid(to, subject, text, html);
     return;
   }
   if (process.env.SMTP_HOST) {
-    await sendEmailViaSmtp(to, subject, body);
+    await sendEmailViaSmtp(to, subject, text, html);
     return;
   }
-  console.log(`[Email stub] To: ${to} | ${subject}: ${body}`);
+  console.log(`[Email stub] To: ${to} | ${subject}\n${text}`);
   throw new Error(
     "No email provider configured. Add RESEND_API_KEY, SENDGRID_API_KEY, or SMTP_* to .env"
   );
 }
 
-async function sendEmailViaResend(to: string, subject: string, body: string) {
+async function sendEmailViaResend(to: string, subject: string, text: string, html: string) {
   const from = process.env.EMAIL_FROM || "WickSense <onboarding@resend.dev>";
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -94,14 +108,14 @@ async function sendEmailViaResend(to: string, subject: string, body: string) {
       Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ from, to: [to], subject, text: body }),
+    body: JSON.stringify({ from, to: [to], subject, text, html }),
   });
   if (!res.ok) {
     throw new Error(`Resend error (${res.status}): ${await res.text()}`);
   }
 }
 
-async function sendEmailViaSendGrid(to: string, subject: string, body: string) {
+async function sendEmailViaSendGrid(to: string, subject: string, text: string, html: string) {
   const fromEmail = process.env.EMAIL_FROM || process.env.SMTP_USER || "alerts@wicksense.pro";
   const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
     method: "POST",
@@ -113,7 +127,10 @@ async function sendEmailViaSendGrid(to: string, subject: string, body: string) {
       personalizations: [{ to: [{ email: to }] }],
       from: { email: fromEmail },
       subject,
-      content: [{ type: "text/plain", value: body }],
+      content: [
+        { type: "text/plain", value: text },
+        { type: "text/html", value: html },
+      ],
     }),
   });
   if (!res.ok) {
@@ -121,7 +138,7 @@ async function sendEmailViaSendGrid(to: string, subject: string, body: string) {
   }
 }
 
-async function sendEmailViaSmtp(to: string, subject: string, body: string) {
+async function sendEmailViaSmtp(to: string, subject: string, text: string, html: string) {
   const port = parseInt(process.env.SMTP_PORT || "587", 10);
   const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
@@ -137,8 +154,8 @@ async function sendEmailViaSmtp(to: string, subject: string, body: string) {
     from: process.env.EMAIL_FROM || process.env.SMTP_USER || "alerts@wicksense.pro",
     to,
     subject,
-    text: body,
-    html: `<p>${body.replace(/\n/g, "<br>")}</p>`,
+    text,
+    html,
   });
 }
 

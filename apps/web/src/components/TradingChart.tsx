@@ -17,6 +17,8 @@ import {
 import { ema, rsi, bollingerBands } from "@wicksense/core";
 import type { OHLCV, ChartMarker } from "@wicksense/core";
 import { Eraser, TrendingUp } from "lucide-react";
+import { useAppStore } from "@/lib/store";
+import { type ChartStyle, DEFAULT_CHART_STYLE } from "@/lib/chart-style";
 
 const INDICATORS = [
   { id: "ema9", label: "EMA 9" },
@@ -31,15 +33,17 @@ const CHART_STYLES = [
   { id: "line", label: "Line", compact: "L" },
 ] as const;
 
-export type ChartStyle = (typeof CHART_STYLES)[number]["id"];
+export type { ChartStyle };
 
 interface TradingChartProps {
+  slotId: string;
   bars: OHLCV[];
   markers: ChartMarker[];
   onClearMarkers: () => void;
   height?: number;
   compact?: boolean;
   title?: string;
+  refreshing?: boolean;
 }
 
 function sortUniqueBars(bars: OHLCV[]): OHLCV[] {
@@ -101,13 +105,19 @@ function toLineData(bars: OHLCV[]): LineData<Time>[] {
 type MainSeries = ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
 
 export function TradingChart({
+  slotId,
   bars,
   markers,
   onClearMarkers,
   height = 480,
   compact = false,
   title = "Trading Chart",
+  refreshing = false,
 }: TradingChartProps) {
+  const chartStyle = useAppStore(
+    (s) => s.chartStyles[slotId] ?? DEFAULT_CHART_STYLE
+  );
+  const setChartStyle = useAppStore((s) => s.setChartStyle);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const mainSeriesRef = useRef<MainSeries | null>(null);
@@ -115,7 +125,6 @@ export function TradingChart({
   const overlayRefs = useRef<ISeriesApi<"Line">[]>([]);
   const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const [activeIndicators, setActiveIndicators] = useState<string[]>(["ema9", "ema21"]);
-  const [chartStyle, setChartStyle] = useState<ChartStyle>("candles");
   const [chartError, setChartError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -315,7 +324,7 @@ export function TradingChart({
           {CHART_STYLES.map(({ id, label, compact: shortLabel }) => (
             <button
               key={id}
-              onClick={() => setChartStyle(id)}
+              onClick={() => setChartStyle(slotId, id)}
               className={`rounded px-2 py-1 text-xs transition-colors ${
                 chartStyle === id
                   ? "bg-[var(--accent)]/20 text-[var(--accent)]"
@@ -350,7 +359,14 @@ export function TradingChart({
           </button>
         </div>
       </div>
-      <div ref={containerRef} className="w-full" style={{ minHeight: height }} />
+      <div className="relative w-full">
+        {refreshing && (
+          <div className="pointer-events-none absolute right-3 top-2 z-10 rounded bg-black/60 px-2 py-0.5 text-[10px] text-[var(--muted)]">
+            Updating…
+          </div>
+        )}
+        <div ref={containerRef} className="w-full" style={{ minHeight: height }} />
+      </div>
       {!compact && activeIndicators.includes("rsi") && bars.length > 0 && <RsiPanel bars={bars} />}
     </div>
   );

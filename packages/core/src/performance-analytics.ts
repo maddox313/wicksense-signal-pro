@@ -83,3 +83,24 @@ export function buildTradePnLSeries(trades: Trade[], limit = 30): TradePnLPoint[
 export function statsForTrades(trades: Trade[]): PerformanceStats {
   return computePerformanceStats(trades);
 }
+
+export type {
+  StrategyPerformanceBreakdown,
+  AccountSyncActivityRow,
+  AccountSyncActivitySummary,
+  SignalActivityRecord,
+  SignalActivityKind,
+  StrategyExtendedBreakdown,
+  StrategyTelemetryOverlay,
+} from "./strategy-breakdown";
+export {
+  computeStrategyBreakdown,
+  computeAccountSyncActivity,
+  computeStrategyExtendedBreakdown,
+  buildOpenTradesByStrategy,
+  extractSignalIdFromTrade,
+  isAccountSyncTrade,
+  isAppStrategyTrade,
+  ALPACA_SYNC_STRATEGY,
+  ALPACA_SYNC_CHART_SLOT,
+} from "./strategy-breakdown";

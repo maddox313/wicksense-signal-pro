@@ -8,6 +8,7 @@ import {
   computeClosePnl,
   computeClosePnlPercent,
   positionKey,
+  shouldPreserveOpenAppTrade,
 } from "./position-sync-helpers.ts";
 
 interface MockAlpacaPosition {
@@ -119,5 +120,41 @@ describe("computeClosePnlPercent", () => {
       status: "open",
     };
     assert.equal(computeClosePnlPercent(trade, 100), 10);
+  });
+});
+
+describe("shouldPreserveOpenAppTrade", () => {
+  it("preserves recent app trades with signalId during fill grace", () => {
+    const trade: Trade = {
+      id: "trade-main-ema-AAPL-5m-1-buy",
+      symbol: "AAPL",
+      side: "buy",
+      quantity: 1,
+      entryPrice: 100,
+      entryTime: Date.now() - 60_000,
+      mode: "paper",
+      strategy: "ema-crossover",
+      status: "open",
+      chartSlot: "main",
+      signalId: "ema-crossover-AAPL-5m-1-buy",
+    };
+    assert.equal(shouldPreserveOpenAppTrade(trade), true);
+  });
+
+  it("does not preserve stale app trades without alpaca position", () => {
+    const trade: Trade = {
+      id: "trade-main-ema-AAPL-5m-1-buy",
+      symbol: "AAPL",
+      side: "buy",
+      quantity: 1,
+      entryPrice: 100,
+      entryTime: Date.now() - 10 * 60_000,
+      mode: "paper",
+      strategy: "ema-crossover",
+      status: "open",
+      chartSlot: "main",
+      signalId: "ema-crossover-AAPL-5m-1-buy",
+    };
+    assert.equal(shouldPreserveOpenAppTrade(trade), false);
   });
 });

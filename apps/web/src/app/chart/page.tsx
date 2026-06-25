@@ -25,6 +25,7 @@ const TradingChart = dynamic(
 export default function ChartPage() {
   const {
     symbol,
+    timeframe,
     mode,
     markers,
     safetyStopActive,
@@ -33,7 +34,8 @@ export default function ChartPage() {
   } = useAppStore();
 
   const marketData = slotMarketData[MAIN_CHART_SLOT] ?? EMPTY_SLOT_MARKET_DATA;
-  const { bars, quote, loading, fetchError, dataSource } = marketData;
+  const { bars, quote, loading, refreshing, fetchError, dataSource } = marketData;
+  const initialLoad = loading && bars.length === 0;
   const [tradeBlockMessage, setTradeBlockMessage] = useState<string | null>(null);
 
   const manualTrade = async (side: "buy" | "sell") => {
@@ -47,6 +49,7 @@ export default function ChartPage() {
       strategy: "manual",
       mode,
       bars,
+      timeframe,
     });
     if (result.skipped && result.reason) {
       setTradeBlockMessage(result.reason);
@@ -83,7 +86,7 @@ export default function ChartPage() {
         <div className="flex gap-2">
           <button
             onClick={() => void manualTrade("buy")}
-            disabled={safetyStopActive || loading || bars.length === 0}
+            disabled={safetyStopActive || initialLoad || bars.length === 0}
             className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[var(--accent)] py-3 text-sm font-medium text-black disabled:opacity-40"
           >
             <ShoppingCart className="h-4 w-4" />
@@ -91,7 +94,7 @@ export default function ChartPage() {
           </button>
           <button
             onClick={() => void manualTrade("sell")}
-            disabled={safetyStopActive || loading || bars.length === 0}
+            disabled={safetyStopActive || initialLoad || bars.length === 0}
             className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[var(--danger)] py-3 text-sm font-medium text-white disabled:opacity-40"
           >
             <DollarSign className="h-4 w-4" />
@@ -102,7 +105,7 @@ export default function ChartPage() {
 
       <div className="grid grid-cols-4 gap-4">
         <div className="col-span-3">
-          {loading ? (
+          {initialLoad ? (
             <div className="flex h-[520px] items-center justify-center rounded-xl border border-[var(--card-border)] bg-[var(--card)]">
               <p className="text-sm text-[var(--muted)]">Loading chart data...</p>
             </div>
@@ -111,7 +114,13 @@ export default function ChartPage() {
               <p className="text-sm text-[var(--muted)]">No chart data available for {symbol}</p>
             </div>
           ) : (
-            <TradingChart bars={bars} markers={markers} onClearMarkers={clearMarkers} />
+            <TradingChart
+              slotId={MAIN_CHART_SLOT}
+              bars={bars}
+              markers={markers}
+              onClearMarkers={clearMarkers}
+              refreshing={refreshing}
+            />
           )}
         </div>
         <div className="space-y-4">

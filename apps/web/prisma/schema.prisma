@@ -59,6 +59,8 @@ model Trade {
   strategy          String
   status            String
   chartSlot         String?
+  timeframe         String?
+  signalId          String?
   stopLossPrice     Float?
   alpacaOrderId     String?
   alpacaStopOrderId String?

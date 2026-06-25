@@ -8,7 +8,12 @@ import {
   runSlotCycle,
 } from "@/lib/autoTradeRunner";
 import { syncTradesWithAlpaca } from "@/lib/sync-client";
+import { ensurePresetsLoaded } from "@/lib/presets-client";
 import { useAppStore } from "@/lib/store";
+import {
+  markEngineCycleComplete,
+  markEngineCycleStart,
+} from "@/lib/strategy-engine-telemetry";
 
 /**
  * Persistent auto-trade engine — mounted in the app shell so polling, signal
@@ -23,8 +28,14 @@ export function AutoTradeEngine() {
     const tick = async () => {
       if (runningRef.current) return;
       runningRef.current = true;
+      markEngineCycleStart();
       try {
-        await syncTradesWithAlpaca();
+        const presetsReady = await ensurePresetsLoaded();
+        if (!presetsReady) {
+          return;
+        }
+
+        void syncTradesWithAlpaca();
         const { multiChartSlots } = useAppStore.getState();
         await runSlotCycle(
           buildMainSlotConfig(),
@@ -40,6 +51,7 @@ export function AutoTradeEngine() {
         }
       } finally {
         runningRef.current = false;
+        markEngineCycleComplete();
       }
     };
 

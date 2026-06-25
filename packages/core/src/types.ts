@@ -47,6 +47,8 @@ export interface Trade {
   strategy: string;
   status: "open" | "closed" | "cancelled";
   chartSlot?: string;
+  timeframe?: string;
+  signalId?: string;
   stopLossPrice?: number;
   alpacaOrderId?: string;
   alpacaStopOrderId?: string;

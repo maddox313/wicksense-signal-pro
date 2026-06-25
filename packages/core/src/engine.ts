@@ -31,7 +31,7 @@ export function runBacktest(
 
     const slice = bars.slice(0, i + 1);
     const signals = evaluateStrategies(
-      { symbol, bars: slice, style },
+      { symbol, bars: slice, style, timeframe: preset.timeframe },
       preset.strategies
     );
     const signal = consensusSignal(signals);
@@ -122,7 +122,8 @@ export function detectRecentSignal(
   bars: OHLCV[],
   strategyIds: string[],
   style: TradingStyle,
-  lookback = DEFAULT_SCAN_LOOKBACK
+  lookback = DEFAULT_SCAN_LOOKBACK,
+  timeframe = "5m"
 ): Signal | null {
   if (bars.length < MIN_BARS) return null;
 
@@ -131,7 +132,7 @@ export function detectRecentSignal(
 
   for (let i = start; i < bars.length; i++) {
     const slice = bars.slice(0, i + 1);
-    const signals = evaluateStrategies({ symbol, bars: slice, style }, strategyIds);
+    const signals = evaluateStrategies({ symbol, bars: slice, style, timeframe }, strategyIds);
     const signal = pickScannerSignal(signals);
     if (signal && (!best || signal.time >= best.time)) {
       best = signal;
@@ -141,12 +142,26 @@ export function detectRecentSignal(
   return best;
 }
 
+/** All strategy signals on the current (latest) bar. */
+export function detectCurrentBarSignals(
+  symbol: string,
+  bars: OHLCV[],
+  strategyIds: string[],
+  style: TradingStyle,
+  timeframe = "5m"
+): Signal[] {
+  if (bars.length < MIN_BARS) return [];
+  return evaluateStrategies({ symbol, bars, style, timeframe }, strategyIds);
+}
+
 export function scanMarket(
   data: { symbol: string; bars: OHLCV[]; changePercent: number }[],
   strategyIds: string[],
   style: TradingStyle,
-  lookback = DEFAULT_SCAN_LOOKBACK
+  lookback = DEFAULT_SCAN_LOOKBACK,
+  timeframe?: string
 ): ScannerResult[] {
+  const tf = timeframe ?? (style === "day" ? "5m" : "1d");
   const results: ScannerResult[] = [];
   for (const item of data) {
     if (item.bars.length < MIN_BARS) continue;
@@ -155,7 +170,8 @@ export function scanMarket(
       item.bars,
       strategyIds,
       style,
-      lookback
+      lookback,
+      tf
     );
     if (!signal) continue;
     const lastBar = item.bars[item.bars.length - 1];
@@ -192,8 +208,9 @@ export function detectSignal(
   symbol: string,
   bars: OHLCV[],
   strategyIds: string[],
-  style: TradingStyle
+  style: TradingStyle,
+  timeframe = "5m"
 ): Signal | null {
-  const signals = evaluateStrategies({ symbol, bars, style }, strategyIds);
+  const signals = evaluateStrategies({ symbol, bars, style, timeframe }, strategyIds);
   return consensusSignal(signals);
 }

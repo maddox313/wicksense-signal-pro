@@ -14,11 +14,18 @@ import type {
 import { DEFAULT_RISK_SETTINGS, DEFAULT_ALERT_SETTINGS, DEFAULT_TRADING_SCHEDULE } from "@wicksense/core";
 import type { TradingScheduleSettings } from "@wicksense/core";
 import { ALL_CHART_SLOT_IDS } from "./chart-slots";
+import {
+  type ChartStyle,
+  loadChartStyles,
+  persistChartStyles,
+} from "./chart-style";
+import { loadMainChartPrefs, persistMainChartPrefs } from "./main-chart-prefs";
 
 export interface SlotMarketData {
   bars: OHLCV[];
   quote?: { price: number; change: number };
   loading: boolean;
+  refreshing: boolean;
   fetchError: string | null;
   dataSource: "live" | "mock" | null;
 }
@@ -26,6 +33,7 @@ export interface SlotMarketData {
 export const EMPTY_SLOT_MARKET_DATA: SlotMarketData = {
   bars: [],
   loading: true,
+  refreshing: false,
   fetchError: null,
   dataSource: null,
 };
@@ -102,6 +110,7 @@ interface AppState {
   slotMarketData: Record<string, SlotMarketData>;
   syncStatus: SyncStatusState;
   tradingSchedule: TradingScheduleSettings;
+  chartStyles: Record<string, ChartStyle>;
 
   setSymbol: (symbol: string) => void;
   setTimeframe: (tf: string) => void;
@@ -128,12 +137,16 @@ interface AppState {
   patchSlotMarketData: (slotId: string, patch: Partial<SlotMarketData>) => void;
   setSyncStatus: (status: Partial<SyncStatusState>) => void;
   setTradingSchedule: (schedule: TradingScheduleSettings) => void;
+  setChartStyle: (slotId: string, style: ChartStyle) => void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
-  symbol: "AAPL",
-  timeframe: "5m",
-  tradingStyle: "day",
+export const useAppStore = create<AppState>((set) => {
+  const mainChartPrefs = loadMainChartPrefs();
+
+  return {
+  symbol: mainChartPrefs.symbol,
+  timeframe: mainChartPrefs.timeframe,
+  tradingStyle: mainChartPrefs.tradingStyle,
   mode: "paper",
   autoTradeEnabled: false,
   markers: [],
@@ -150,10 +163,38 @@ export const useAppStore = create<AppState>((set) => ({
   slotMarketData: createInitialSlotMarketData(),
   syncStatus: { ...EMPTY_SYNC_STATUS },
   tradingSchedule: { ...DEFAULT_TRADING_SCHEDULE },
+  chartStyles: loadChartStyles(),
 
-  setSymbol: (symbol) => set({ symbol: symbol.toUpperCase() }),
-  setTimeframe: (timeframe) => set({ timeframe }),
-  setTradingStyle: (tradingStyle) => set({ tradingStyle }),
+  setSymbol: (symbol) =>
+    set((s) => {
+      const next = { ...s, symbol: symbol.toUpperCase() };
+      persistMainChartPrefs({
+        symbol: next.symbol,
+        timeframe: next.timeframe,
+        tradingStyle: next.tradingStyle,
+      });
+      return { symbol: next.symbol };
+    }),
+  setTimeframe: (timeframe) =>
+    set((s) => {
+      const next = { ...s, timeframe };
+      persistMainChartPrefs({
+        symbol: next.symbol,
+        timeframe: next.timeframe,
+        tradingStyle: next.tradingStyle,
+      });
+      return { timeframe };
+    }),
+  setTradingStyle: (tradingStyle) =>
+    set((s) => {
+      const next = { ...s, tradingStyle };
+      persistMainChartPrefs({
+        symbol: next.symbol,
+        timeframe: next.timeframe,
+        tradingStyle: next.tradingStyle,
+      });
+      return { tradingStyle };
+    }),
   setMode: (mode) => set({ mode }),
   setAutoTradeEnabled: (autoTradeEnabled) => set({ autoTradeEnabled }),
   addMarker: (marker) =>
@@ -223,4 +264,11 @@ export const useAppStore = create<AppState>((set) => ({
       syncStatus: { ...s.syncStatus, ...status },
     })),
   setTradingSchedule: (tradingSchedule) => set({ tradingSchedule }),
-}));
+  setChartStyle: (slotId, style) =>
+    set((s) => {
+      const chartStyles = { ...s.chartStyles, [slotId]: style };
+      persistChartStyles(chartStyles);
+      return { chartStyles };
+    }),
+};
+});

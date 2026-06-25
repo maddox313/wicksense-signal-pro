@@ -32,7 +32,8 @@ export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
   const [tradeBlockMessage, setTradeBlockMessage] = useState<string | null>(null);
 
   const marketData = slotMarketData[slot.id] ?? EMPTY_SLOT_MARKET_DATA;
-  const { bars, quote, loading, fetchError } = marketData;
+  const { bars, quote, loading, refreshing, fetchError } = marketData;
+  const initialLoad = loading && bars.length === 0;
 
   const manualTrade = async (side: "buy" | "sell") => {
     const price = quote?.price ?? bars[bars.length - 1]?.close ?? 0;
@@ -45,6 +46,7 @@ export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
       strategy: "manual",
       mode: slot.mode,
       bars,
+      timeframe: slot.timeframe,
     });
     if (result.skipped && result.reason) {
       setTradeBlockMessage(result.reason);
@@ -117,7 +119,7 @@ export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
         </button>
         <button
           onClick={() => void manualTrade("buy")}
-          disabled={slot.safetyStopActive || loading || bars.length === 0}
+          disabled={slot.safetyStopActive || initialLoad || bars.length === 0}
           className="flex items-center gap-1 rounded bg-[var(--accent)] px-2 py-1 text-[10px] font-medium text-black disabled:opacity-40"
         >
           <ShoppingCart className="h-3 w-3" />
@@ -125,7 +127,7 @@ export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
         </button>
         <button
           onClick={() => void manualTrade("sell")}
-          disabled={slot.safetyStopActive || loading || bars.length === 0}
+          disabled={slot.safetyStopActive || initialLoad || bars.length === 0}
           className="flex items-center gap-1 rounded bg-[var(--danger)] px-2 py-1 text-[10px] font-medium text-white disabled:opacity-40"
         >
           <DollarSign className="h-3 w-3" />
@@ -161,7 +163,7 @@ export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
       )}
 
       <div className="p-2">
-        {loading ? (
+        {initialLoad ? (
           <div className="flex h-[220px] items-center justify-center rounded-lg bg-black/20">
             <p className="text-xs text-[var(--muted)]">Loading...</p>
           </div>
@@ -171,12 +173,14 @@ export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
           </div>
         ) : (
           <TradingChart
+            slotId={slot.id}
             bars={bars}
             markers={slot.markers}
             onClearMarkers={() => clearMultiChartMarkers(slot.id)}
             height={220}
             compact
             title={`${slot.symbol} · ${slot.timeframe}`}
+            refreshing={refreshing}
           />
         )}
       </div>

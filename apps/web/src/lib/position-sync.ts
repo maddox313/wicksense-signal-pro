@@ -1,5 +1,5 @@
 import type { Trade, TradeSide } from "@wicksense/core";
-import { DEFAULT_RISK_SETTINGS } from "@wicksense/core";
+import { DEFAULT_RISK_SETTINGS, isAccountSyncTrade, isAppStrategyTrade } from "@wicksense/core";
 import {
   getPositions,
   fetchQuote,
@@ -14,9 +14,20 @@ import {
   computeClosePnl,
   computeClosePnlPercent,
   positionKey,
+  shouldPreserveOpenAppTrade,
+  tradesMatchingPosition,
 } from "@/lib/position-sync-helpers";
 import { getRiskEngine } from "@/lib/risk-engine-registry";
-import { getOpenTrades, upsertTrade } from "@/lib/trade-store";
+import {
+  applyAttributionToOpenTrade,
+  loadStrategyAttribution,
+} from "@/lib/strategy-attribution";
+import {
+  deleteTrade,
+  findLatestStrategyAttribution,
+  getOpenTrades,
+  upsertTrade,
+} from "@/lib/trade-store";
 
 export interface PositionSyncResult {
   mode: "paper" | "live";
@@ -40,7 +51,7 @@ async function closeTradeAtPrice(trade: Trade, exitPrice: number, reason: string
     pnl,
     pnlPercent: computeClosePnlPercent(trade, pnl),
     status: "closed",
-    strategy: trade.strategy === "alpaca-sync" ? `closed:${reason}` : trade.strategy,
+    strategy: isAccountSyncTrade(trade) ? `closed:${reason}` : trade.strategy,
   });
 }
 
@@ -64,6 +75,102 @@ function indexAlpacaPositions(positions: AlpacaPosition[]) {
     byKey.set(positionKey(p.symbol, alpacaPositionSide(p)), p);
   }
   return byKey;
+}
+
+function positionChanged(
+  trade: Trade,
+  alpacaQty: number,
+  alpacaSide: TradeSide,
+  entry: number
+): boolean {
+  return (
+    alpacaQty !== trade.quantity || alpacaSide !== trade.side || entry !== trade.entryPrice
+  );
+}
+
+async function updateAppTradeFromAlpaca(
+  trade: Trade,
+  alpacaQty: number,
+  alpacaSide: TradeSide,
+  entry: number
+): Promise<boolean> {
+  if (!positionChanged(trade, alpacaQty, alpacaSide, entry)) return false;
+  await upsertTrade({
+    ...trade,
+    side: alpacaSide,
+    quantity: alpacaQty,
+    entryPrice: entry,
+    strategy: trade.strategy,
+    chartSlot: trade.chartSlot,
+    signalId: trade.signalId,
+    timeframe: trade.timeframe,
+    alpacaOrderId: trade.alpacaOrderId,
+    status: "open",
+  });
+  return true;
+}
+
+async function removeSyncDuplicates(cohort: Trade[], keep: Trade): Promise<number> {
+  let removed = 0;
+  for (const trade of cohort) {
+    if (trade.id === keep.id) continue;
+    if (isAccountSyncTrade(trade) && (await deleteTrade(trade.id))) {
+      removed++;
+    }
+  }
+  return removed;
+}
+
+async function resolveStrategyAttribution(
+  symbol: string,
+  side: TradeSide,
+  mode: "paper" | "live"
+) {
+  return (
+    loadStrategyAttribution(symbol, side, mode) ??
+    (await findLatestStrategyAttribution(symbol, side, mode))
+  );
+}
+
+async function repairOpenSyncAttributions(mode: "paper" | "live"): Promise<number> {
+  let repaired = 0;
+  const openForMode = await getOpenTrades(mode);
+  for (const trade of openForMode) {
+    if (!isAccountSyncTrade(trade)) continue;
+    const attribution = await resolveStrategyAttribution(trade.symbol, trade.side, mode);
+    if (!attribution) continue;
+    await upsertTrade(applyAttributionToOpenTrade(trade, attribution));
+    repaired++;
+  }
+  return repaired;
+}
+
+async function upsertAttributedOpenTrade(params: {
+  mode: "paper" | "live";
+  symbol: string;
+  side: TradeSide;
+  quantity: number;
+  entryPrice: number;
+  attribution: NonNullable<Awaited<ReturnType<typeof resolveStrategyAttribution>>>;
+}): Promise<Trade> {
+  const { mode, symbol, side, quantity, entryPrice, attribution } = params;
+  const base: Trade = {
+    id: attribution.signalId
+      ? `trade-${attribution.chartSlot}-${attribution.signalId}`
+      : alpacaSyncTradeId(mode, symbol, side),
+    symbol,
+    side,
+    quantity,
+    entryPrice,
+    entryTime: attribution.entryTime,
+    mode,
+    strategy: attribution.strategy,
+    status: "open",
+    chartSlot: attribution.chartSlot,
+    timeframe: attribution.timeframe,
+    signalId: attribution.signalId,
+  };
+  return upsertTrade(applyAttributionToOpenTrade(base, attribution));
 }
 
 export async function syncAlpacaPositions(
@@ -98,38 +205,101 @@ export async function syncAlpacaPositions(
   let closed = 0;
   let quantityUpdated = 0;
 
+  await repairOpenSyncAttributions(mode);
+
   const openForMode = await getOpenTrades(mode);
+  const processedKeys = new Set<string>();
 
   for (const trade of openForMode) {
     const key = positionKey(trade.symbol, trade.side);
+    if (processedKeys.has(key)) continue;
+    processedKeys.add(key);
+
+    const cohort = tradesMatchingPosition(openForMode, trade.symbol, trade.side);
+    const appTrade = cohort.find(isAppStrategyTrade);
     const alpacaPos = alpacaByKey.get(key);
-    if (!alpacaPos) {
-      const exitPrice = await resolveExitPrice(trade.symbol, trade.entryPrice);
-      await closeTradeAtPrice(trade, exitPrice, "alpaca-flat");
-      closed++;
+
+    if (alpacaPos) {
+      const alpacaQty = alpacaPositionQty(alpacaPos);
+      const alpacaSide = alpacaPositionSide(alpacaPos);
+      const entry = parseFloat(alpacaPos.avg_entry_price) || appTrade?.entryPrice || 0;
+
+      if (appTrade) {
+        if (await updateAppTradeFromAlpaca(appTrade, alpacaQty, alpacaSide, entry)) {
+          quantityUpdated++;
+        }
+        await removeSyncDuplicates(cohort, appTrade);
+      } else {
+        const syncTrade = cohort.find(isAccountSyncTrade) ?? cohort[0];
+        if (syncTrade && (await updateAppTradeFromAlpaca(syncTrade, alpacaQty, alpacaSide, entry))) {
+          quantityUpdated++;
+        }
+      }
+
+      alpacaByKey.delete(key);
       continue;
     }
 
-    const alpacaQty = alpacaPositionQty(alpacaPos);
-    const alpacaSide = alpacaPositionSide(alpacaPos);
-    const entry = parseFloat(alpacaPos.avg_entry_price) || trade.entryPrice;
-    if (alpacaQty !== trade.quantity || alpacaSide !== trade.side || entry !== trade.entryPrice) {
-      await upsertTrade({
-        ...trade,
-        side: alpacaSide,
-        quantity: alpacaQty,
-        entryPrice: entry,
-      });
-      quantityUpdated++;
+    if (appTrade && shouldPreserveOpenAppTrade(appTrade)) {
+      await removeSyncDuplicates(cohort, appTrade);
+      continue;
     }
-    alpacaByKey.delete(key);
+
+    for (const openTrade of cohort) {
+      const exitPrice = await resolveExitPrice(openTrade.symbol, openTrade.entryPrice);
+      await closeTradeAtPrice(openTrade, exitPrice, "alpaca-flat");
+      closed++;
+    }
   }
 
-  for (const [key, pos] of alpacaByKey) {
+  for (const [, pos] of alpacaByKey) {
     const side = alpacaPositionSide(pos);
+    const symbol = pos.symbol;
+    const key = positionKey(symbol, side);
+
+    const stillOpen = await getOpenTrades(mode);
+    const appMatch = stillOpen.find(
+      (trade) =>
+        trade.symbol === symbol &&
+        trade.side === side &&
+        isAppStrategyTrade(trade)
+    );
+    if (appMatch) {
+      continue;
+    }
+
+    const syncMatch = stillOpen.find(
+      (trade) =>
+        trade.symbol === symbol &&
+        trade.side === side &&
+        isAccountSyncTrade(trade)
+    );
+    if (syncMatch) {
+      const qty = alpacaPositionQty(pos);
+      const entry = parseFloat(pos.avg_entry_price);
+      if (await updateAppTradeFromAlpaca(syncMatch, qty, side, entry)) {
+        quantityUpdated++;
+      }
+      void key;
+      continue;
+    }
+
     const qty = alpacaPositionQty(pos);
     const entry = parseFloat(pos.avg_entry_price);
-    const symbol = pos.symbol;
+    const attribution = await resolveStrategyAttribution(symbol, side, mode);
+
+    if (attribution) {
+      await upsertAttributedOpenTrade({
+        mode,
+        symbol,
+        side,
+        quantity: qty,
+        entryPrice: entry,
+        attribution,
+      });
+      imported++;
+      continue;
+    }
 
     await upsertTrade({
       id: alpacaSyncTradeId(mode, symbol, side),
@@ -145,7 +315,6 @@ export async function syncAlpacaPositions(
       stopLossPrice: undefined,
     });
     imported++;
-    void key;
   }
 
   return {

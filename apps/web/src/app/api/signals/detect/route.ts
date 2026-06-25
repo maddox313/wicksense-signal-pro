@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { detectRecentSignal } from "@wicksense/core";
+import { detectCurrentBarSignals, detectRecentSignal } from "@wicksense/core";
 import type { OHLCV, TradingStyle } from "@wicksense/core";
 
 export async function POST(req: NextRequest) {
@@ -8,6 +8,7 @@ export async function POST(req: NextRequest) {
     bars?: OHLCV[];
     strategyIds?: string[];
     style?: TradingStyle;
+    timeframe?: string;
   };
   try {
     body = await req.json();
@@ -15,11 +16,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const { symbol, bars, strategyIds, style } = body;
+  const { symbol, bars, strategyIds, style, timeframe } = body;
   if (!symbol || !bars?.length || !strategyIds?.length || !style) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
-  const signal = detectRecentSignal(symbol, bars, strategyIds, style);
-  return NextResponse.json({ signal });
+  const tf = timeframe || (style === "day" ? "5m" : "1d");
+  const signal = detectRecentSignal(symbol, bars, strategyIds, style, undefined, tf);
+  const barSignals = detectCurrentBarSignals(symbol, bars, strategyIds, style, tf);
+  return NextResponse.json({ signal, barSignals });
 }

@@ -5,6 +5,7 @@ export interface StrategyContext {
   symbol: string;
   bars: OHLCV[];
   style: TradingStyle;
+  timeframe: string;
 }
 
 export interface Strategy {
@@ -13,6 +14,16 @@ export interface Strategy {
   description: string;
   style: TradingStyle | "both";
   evaluate: (ctx: StrategyContext) => Signal | null;
+}
+
+export function buildSignalId(
+  strategy: string,
+  symbol: string,
+  timeframe: string,
+  barTime: number,
+  side: Signal["side"]
+): string {
+  return `${strategy}-${symbol}-${timeframe}-${barTime}-${side}`;
 }
 
 function makeSignal(
@@ -24,7 +35,7 @@ function makeSignal(
 ): Signal {
   const bar = ctx.bars[ctx.bars.length - 1];
   return {
-    id: `${strategy}-${ctx.symbol}-${bar.time}-${side}`,
+    id: buildSignalId(strategy, ctx.symbol, ctx.timeframe, bar.time, side),
     symbol: ctx.symbol,
     side,
     price: bar.close,
