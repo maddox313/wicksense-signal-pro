@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { computePerformanceStats, isAppStrategyTrade } from "@wicksense/core";
 import type { RiskSettings, AlertSettings, Trade, TradeMode } from "@wicksense/core";
 import {
-  placeOrder,
+  placeOrderWithFill,
   resolveAccountEquity,
   placeLiveStopLossOrder,
   cancelLiveStopOrdersForSymbol,
@@ -16,6 +16,10 @@ import {
   computeStopLossPrice,
 } from "@/lib/live-trading-config";
 import { getRiskEngine } from "@/lib/risk-engine-registry";
+import {
+  computeClosePnl,
+  computeClosePnlPercent,
+} from "@/lib/position-sync-helpers";
 import {
   getAllTrades,
   getOpenTrades,
@@ -138,28 +142,47 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ skipped: true, reason: "Signal already traded" });
     }
 
+    let exitPrice = price;
+    let closedQty = openBuy.quantity;
+
     if (mode === "live") {
       try {
         await cancelLiveStopOrdersForSymbol(symbol);
-        await placeOrder({ symbol, qty: openBuy.quantity, side: "sell", paper: false });
+        const fill = await placeOrderWithFill({
+          symbol,
+          qty: openBuy.quantity,
+          side: "sell",
+          paper: false,
+        });
+        exitPrice = fill.filledAvgPrice;
+        closedQty = fill.filledQty;
       } catch (err) {
         return NextResponse.json({ error: String(err) }, { status: 500 });
       }
     } else if (mode === "paper") {
       try {
-        await placeOrder({ symbol, qty: openBuy.quantity, side: "sell", paper: true });
+        const fill = await placeOrderWithFill({
+          symbol,
+          qty: openBuy.quantity,
+          side: "sell",
+          paper: true,
+        });
+        exitPrice = fill.filledAvgPrice;
+        closedQty = fill.filledQty;
       } catch (err) {
         return NextResponse.json({ error: String(err) }, { status: 500 });
       }
     }
 
-    const pnl = (price - openBuy.entryPrice) * openBuy.quantity;
+    const closedBasis = { ...openBuy, quantity: closedQty };
+    const pnl = computeClosePnl(closedBasis, exitPrice);
     const closed: Trade = {
       ...openBuy,
-      exitPrice: price,
+      quantity: closedQty,
+      exitPrice,
       exitTime: Date.now(),
       pnl,
-      pnlPercent: (pnl / (openBuy.entryPrice * openBuy.quantity)) * 100,
+      pnlPercent: computeClosePnlPercent(closedBasis, pnl),
       status: "closed",
     };
     await upsertTrade(closed);
@@ -169,13 +192,13 @@ export async function POST(req: NextRequest) {
     await sendAlert(
       "default",
       side,
-      `${side.toUpperCase()} ${openBuy.quantity} ${symbol} @ $${price.toFixed(2)} (${strategy})`,
+      `${side.toUpperCase()} ${closedQty} ${symbol} @ $${exitPrice.toFixed(2)} (${strategy})`,
       effectiveAlertSettings,
       contact,
       {
         symbol,
-        quantity: openBuy.quantity,
-        entryPrice: price,
+        quantity: closedQty,
+        entryPrice: exitPrice,
         strategy,
         timeframe: timeframe ?? openBuy.timeframe,
         mode,
@@ -249,7 +272,7 @@ export async function POST(req: NextRequest) {
   }
 
   const liveSettings = loadLiveTradingSettings();
-  const stopLoss = computeStopLossPrice(price, liveSettings.stopLossPercent);
+  let stopLoss = computeStopLossPrice(price, liveSettings.stopLossPercent);
   const { quantity } = engine.calculatePositionSize(accountEquity, price, stopLoss);
   if (quantity <= 0) {
     return NextResponse.json({ error: "Position size too small" });
@@ -257,17 +280,27 @@ export async function POST(req: NextRequest) {
 
   let alpacaOrderId: string | undefined;
   let alpacaStopOrderId: string | undefined;
+  let entryPrice = price;
+  let filledQty = quantity;
 
   if (mode === "live") {
     try {
-      const buyOrder = await placeOrder({ symbol, qty: quantity, side: "buy", paper: false });
-      alpacaOrderId = buyOrder?.id;
+      const fill = await placeOrderWithFill({
+        symbol,
+        qty: quantity,
+        side: "buy",
+        paper: false,
+      });
+      alpacaOrderId = fill.orderId;
+      entryPrice = fill.filledAvgPrice;
+      filledQty = fill.filledQty;
 
       if (liveSettings.brokerStopLossEnabled) {
+        stopLoss = computeStopLossPrice(entryPrice, liveSettings.stopLossPercent);
         try {
           const stopOrder = await placeLiveStopLossOrder({
             symbol,
-            qty: quantity,
+            qty: filledQty,
             stopPrice: stopLoss,
           });
           alpacaStopOrderId = stopOrder?.id;
@@ -288,8 +321,15 @@ export async function POST(req: NextRequest) {
     }
   } else if (mode === "paper") {
     try {
-      const buyOrder = await placeOrder({ symbol, qty: quantity, side: "buy", paper: true });
-      alpacaOrderId = buyOrder?.id;
+      const fill = await placeOrderWithFill({
+        symbol,
+        qty: quantity,
+        side: "buy",
+        paper: true,
+      });
+      alpacaOrderId = fill.orderId;
+      entryPrice = fill.filledAvgPrice;
+      filledQty = fill.filledQty;
     } catch (err) {
       return NextResponse.json({ error: String(err) }, { status: 500 });
     }
@@ -303,8 +343,8 @@ export async function POST(req: NextRequest) {
       : `trade-${chartSlot}-${symbol}-buy-${Date.now()}`,
     symbol,
     side: "buy",
-    quantity,
-    entryPrice: price,
+    quantity: filledQty,
+    entryPrice,
     entryTime: Date.now(),
     mode,
     strategy,
@@ -343,13 +383,13 @@ export async function POST(req: NextRequest) {
   const alertResults = await sendAlert(
     "default",
     side,
-    `${side.toUpperCase()} ${quantity} ${symbol} @ $${price.toFixed(2)} (${strategy})${stopNote}`,
+    `${side.toUpperCase()} ${filledQty} ${symbol} @ $${entryPrice.toFixed(2)} (${strategy})${stopNote}`,
     effectiveAlertSettings,
     contact,
     {
       symbol,
-      quantity,
-      entryPrice: price,
+      quantity: filledQty,
+      entryPrice,
       strategy,
       timeframe,
       mode,

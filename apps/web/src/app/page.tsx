@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { computeTodayPerformanceStats } from "@wicksense/core";
 import { useAppStore } from "@/lib/store";
 import { formatUsd } from "@/lib/account-utils";
-import { TrendingUp, Shield, Zap, BarChart3, Wallet } from "lucide-react";
+import { TrendingUp, Shield, Zap, BarChart3, Wallet, CalendarDays } from "lucide-react";
 
 interface AccountSnapshot {
   equity: number;
@@ -43,6 +44,7 @@ export default function DashboardPage() {
   }, [fetchLiveBalance]);
 
   const openTrades = trades.filter((t) => t.status === "open").length;
+  const todayStats = useMemo(() => computeTodayPerformanceStats(trades), [trades]);
 
   const live = liveBalance?.live;
   const liveEquity = live?.connected && live.account ? live.account.equity : null;
@@ -66,7 +68,7 @@ export default function DashboardPage() {
         </p>
       </header>
 
-      <div className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
+      <div className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
         <Link href="/account" className="block transition-opacity hover:opacity-90">
           <StatCard
             icon={Wallet}
@@ -87,10 +89,22 @@ export default function DashboardPage() {
           color="accent"
         />
         <StatCard
+          icon={CalendarDays}
+          label="Today's P&L"
+          value={mounted ? `$${todayStats.totalPnl.toFixed(2)}` : "—"}
+          color={todayStats.totalPnl >= 0 ? "accent" : "danger"}
+          subtitle={
+            mounted
+              ? `${todayStats.totalTrades} closed today · ET`
+              : undefined
+          }
+        />
+        <StatCard
           icon={BarChart3}
           label="Total P&L"
           value={mounted && performance ? `$${performance.totalPnl.toFixed(2)}` : "—"}
           color={performance && performance.totalPnl >= 0 ? "accent" : "danger"}
+          subtitle={mounted && performance ? "All closed trades" : undefined}
         />
         <StatCard
           icon={Zap}

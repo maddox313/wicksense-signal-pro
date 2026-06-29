@@ -30,6 +30,8 @@ export interface ChartMarker {
   side: TradeSide;
   label: string;
   strategy?: string;
+  /** When set, marker is only shown on charts for this symbol. */
+  symbol?: string;
 }
 
 export interface Trade {
@@ -52,6 +54,8 @@ export interface Trade {
   stopLossPrice?: number;
   alpacaOrderId?: string;
   alpacaStopOrderId?: string;
+  archived?: boolean;
+  archivedAt?: number;
 }
 
 export interface LiveTradingSettings {
@@ -78,6 +82,9 @@ export interface AlertSettings {
   onSell: boolean;
   onStopLoss: boolean;
   onSafetyStop: boolean;
+  onTradingStart: boolean;
+  onTradingStop: boolean;
+  onActionRequired: boolean;
 }
 
 export interface StrategyPreset {
@@ -153,6 +160,9 @@ export const DEFAULT_ALERT_SETTINGS: AlertSettings = {
   onSell: true,
   onStopLoss: true,
   onSafetyStop: true,
+  onTradingStart: true,
+  onTradingStop: true,
+  onActionRequired: true,
 };
 
 export const DEFAULT_LIVE_TRADING_SETTINGS: LiveTradingSettings = {

@@ -15,6 +15,7 @@ import {
   Zap,
   LayoutGrid,
   Wallet,
+  Archive,
 } from "lucide-react";
 import { SyncStatusIndicator } from "@/components/SyncStatusIndicator";
 
@@ -26,6 +27,7 @@ const NAV = [
   { href: "/scanner", label: "Scanner", icon: ScanSearch },
   { href: "/backtest", label: "Backtest", icon: FlaskConical },
   { href: "/performance", label: "Trade Analysis", icon: BarChart3 },
+  { href: "/trade-archive", label: "Trade Archive", icon: Archive },
   { href: "/performance-analysis", label: "Performance Analysis", icon: PieChart },
   { href: "/strategy-performance", label: "Strategy Breakdown", icon: ListTree },
   { href: "/profile", label: "Profile", icon: User },

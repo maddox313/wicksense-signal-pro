@@ -5,6 +5,7 @@ import {
   evaluateTradingSchedule,
 } from "@wicksense/core";
 import { MAIN_CHART_SLOT } from "./chart-slots";
+import { addSignalChartMarker } from "./chart-marker-utils";
 import { useAppStore } from "./store";
 import {
   bootstrapGeneratedFromSignals,
@@ -157,7 +158,8 @@ export async function executeSlotTrade(params: {
       const store = useAppStore.getState();
       if (data.trade) {
         store.addTrade(data.trade);
-        const barTime = bars[bars.length - 1]?.time ?? Math.floor(Date.now() / 1000);
+        const barTime =
+          signalBarTime ?? bars[bars.length - 1]?.time ?? Math.floor(Date.now() / 1000);
         const marker = {
           id: signalId ?? data.trade.id ?? `${slotId}-${side}-${Date.now()}`,
           time: barTime,
@@ -165,6 +167,7 @@ export async function executeSlotTrade(params: {
           side,
           label: side === "buy" ? "BUY" : "SELL",
           strategy,
+          symbol,
         } as const;
         if (slotId === MAIN_CHART_SLOT) {
           store.addMarker(marker);
@@ -176,7 +179,8 @@ export async function executeSlotTrade(params: {
       return { ok: false, reason: data.error ?? "Trade failed" };
     }
 
-    const barTime = bars[bars.length - 1]?.time ?? Math.floor(Date.now() / 1000);
+    const barTime =
+      signalBarTime ?? bars[bars.length - 1]?.time ?? Math.floor(Date.now() / 1000);
     const marker = {
       id: signalId ?? data.trade?.id ?? `${slotId}-${side}-${Date.now()}`,
       time: barTime,
@@ -184,6 +188,7 @@ export async function executeSlotTrade(params: {
       side,
       label: side === "buy" ? "BUY" : "SELL",
       strategy,
+      symbol,
     } as const;
 
     const store = useAppStore.getState();
@@ -346,7 +351,7 @@ export async function runSlotCycle(
       recordSignalActivities(barSignals, "generated", activityOpts);
     }
 
-    if (!data.signal) {
+    if (!signal) {
       recordSlotScan({
         chartSlot: slotId,
         symbol,
@@ -363,12 +368,13 @@ export async function runSlotCycle(
       return;
     }
 
-    recordSignalActivity(data.signal, "generated", activityOpts);
-    store.addSignal(data.signal);
+    recordSignalActivity(signal, "generated", activityOpts);
+    store.addSignal(signal);
+    addSignalChartMarker(slotId, signal);
 
     const rejectSignal = (reason: string) => {
-      recordSignalActivity(data.signal, "rejected", { ...activityOpts, reason });
-      recordStrategyRejected(data.signal.strategy);
+      recordSignalActivity(signal, "rejected", { ...activityOpts, reason });
+      recordStrategyRejected(signal.strategy);
     };
 
     if (!autoTradeEnabled) {
@@ -382,7 +388,7 @@ export async function runSlotCycle(
         presetStrategies: activePreset.strategies,
         barSignalCount: barSignals.length,
         strategiesFired,
-        pickedStrategy: data.signal.strategy,
+        pickedStrategy: signal.strategy,
         outcome: "signal_seen",
         detail: "Auto trade disabled",
       });
@@ -399,7 +405,7 @@ export async function runSlotCycle(
         presetStrategies: activePreset.strategies,
         barSignalCount: barSignals.length,
         strategiesFired,
-        pickedStrategy: data.signal.strategy,
+        pickedStrategy: signal.strategy,
         outcome: "signal_seen",
         detail: "Safety stop active",
       });
@@ -416,22 +422,22 @@ export async function runSlotCycle(
         presetStrategies: activePreset.strategies,
         barSignalCount: barSignals.length,
         strategiesFired,
-        pickedStrategy: data.signal.strategy,
+        pickedStrategy: signal.strategy,
         outcome: "signal_seen",
         detail: "Manual mode",
       });
       return;
     }
 
-    if (lastSignalBySlot.get(slotId) === data.signal.id) {
+    if (lastSignalBySlot.get(slotId) === signal.id) {
       logDuplicateSignalBlocked({
         slot: slotId,
         symbol,
         timeframe,
-        strategy: data.signal.strategy,
-        side: data.signal.side,
-        barTime: data.signal.time,
-        signalId: data.signal.id,
+        strategy: signal.strategy,
+        side: signal.side,
+        barTime: signal.time,
+        signalId: signal.id,
       });
       recordSlotScan({
         chartSlot: slotId,
@@ -442,7 +448,7 @@ export async function runSlotCycle(
         presetStrategies: activePreset.strategies,
         barSignalCount: barSignals.length,
         strategiesFired,
-        pickedStrategy: data.signal.strategy,
+        pickedStrategy: signal.strategy,
         outcome: "signal_seen",
         detail: "Duplicate signal (already processed)",
       });
@@ -461,26 +467,26 @@ export async function runSlotCycle(
         presetStrategies: activePreset.strategies,
         barSignalCount: barSignals.length,
         strategiesFired,
-        pickedStrategy: data.signal.strategy,
+        pickedStrategy: signal.strategy,
         outcome: "signal_seen",
         detail: scheduleCheck.reason ?? "Outside trading schedule",
       });
       return;
     }
 
-    lastSignalBySlot.set(slotId, data.signal.id);
+    lastSignalBySlot.set(slotId, signal.id);
     const result = await executeSlotTrade({
       slotId,
       symbol,
-      side: data.signal.side,
-      price: data.signal.price,
-      strategy: data.signal.strategy,
+      side: signal.side,
+      price: signal.price,
+      strategy: signal.strategy,
       mode,
-      signalId: data.signal.id,
+      signalId: signal.id,
       bars,
       timeframe,
-      signalReason: data.signal.reason,
-      signalBarTime: data.signal.time,
+      signalReason: signal.reason,
+      signalBarTime: signal.time,
     });
 
     if (result.skipped || (!result.ok && result.reason)) {
@@ -494,7 +500,7 @@ export async function runSlotCycle(
         presetStrategies: activePreset.strategies,
         barSignalCount: barSignals.length,
         strategiesFired,
-        pickedStrategy: data.signal.strategy,
+        pickedStrategy: signal.strategy,
         outcome: "signal_seen",
         detail: result.reason ?? "Trade skipped by filter",
       });
@@ -502,8 +508,8 @@ export async function runSlotCycle(
     }
 
     if (result.ok) {
-      recordSignalActivity(data.signal, "converted", activityOpts);
-      recordStrategyConverted(data.signal.strategy);
+      recordSignalActivity(signal, "converted", activityOpts);
+      recordStrategyConverted(signal.strategy);
       recordSlotScan({
         chartSlot: slotId,
         symbol,
@@ -513,7 +519,7 @@ export async function runSlotCycle(
         presetStrategies: activePreset.strategies,
         barSignalCount: barSignals.length,
         strategiesFired,
-        pickedStrategy: data.signal.strategy,
+        pickedStrategy: signal.strategy,
         outcome: "signal_traded",
       });
     }

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useAppStore } from "@/lib/store";
-import { computePerformanceStats } from "@wicksense/core";
+import { computePerformanceStats, computeTodayPerformanceStats } from "@wicksense/core";
 import type { LiveTradingSettings } from "@wicksense/core";
 import { DEFAULT_STARTING_BALANCE, formatUsd } from "@/lib/account-utils";
 import {
@@ -78,10 +78,13 @@ export default function AccountPage() {
   const [liveSettingsMessage, setLiveSettingsMessage] = useState<string | null>(null);
 
   const stats = performance ?? computePerformanceStats(trades);
+  const todayStats = computeTodayPerformanceStats(trades);
   const paperTrades = trades.filter((t) => t.mode === "paper");
   const liveTrades = trades.filter((t) => t.mode === "live");
   const paperStats = computePerformanceStats(paperTrades);
   const liveStats = computePerformanceStats(liveTrades);
+  const paperTodayStats = computeTodayPerformanceStats(paperTrades);
+  const liveTodayStats = computeTodayPerformanceStats(liveTrades);
 
   const fetchBalances = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -179,7 +182,7 @@ export default function AccountPage() {
               ? balances.paper.account!.buyingPower
               : paperEquity
           }
-          sessionPnl={paperStats.totalPnl}
+          sessionPnl={paperTodayStats.totalPnl}
           source={balances?.paper.connected ? "alpaca" : "simulated"}
         />
         <BalanceCard
@@ -194,7 +197,7 @@ export default function AccountPage() {
           buyingPower={
             balances?.live.connected ? balances.live.account!.buyingPower : null
           }
-          sessionPnl={liveStats.totalPnl}
+          sessionPnl={liveTodayStats.totalPnl}
           source={balances?.live.connected ? "alpaca" : "unconfigured"}
         />
       </div>
@@ -229,7 +232,12 @@ export default function AccountPage() {
           </Link>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+          <PerfMetric
+            label="Today's P&L"
+            value={formatUsd(todayStats.totalPnl)}
+            positive={todayStats.totalPnl >= 0}
+          />
           <PerfMetric
             label="Total P&L"
             value={formatUsd(stats.totalPnl)}
@@ -248,9 +256,15 @@ export default function AccountPage() {
           <PerfMetric label="Total Trades" value={String(stats.totalTrades)} />
         </div>
 
+        <p className="mt-3 text-xs text-[var(--muted)]">
+          Today&apos;s P&L includes trades closed today (Eastern Time). Total P&L is all-time realized.
+        </p>
+
         <div className="mt-4 grid grid-cols-1 gap-3 border-t border-[var(--card-border)] pt-4 md:grid-cols-2">
-          <ModeBreakdown label="Paper session P&L" stats={paperStats} />
-          <ModeBreakdown label="Live session P&L" stats={liveStats} />
+          <ModeBreakdown label="Paper today" stats={paperTodayStats} />
+          <ModeBreakdown label="Live today" stats={liveTodayStats} />
+          <ModeBreakdown label="Paper all-time" stats={paperStats} />
+          <ModeBreakdown label="Live all-time" stats={liveStats} />
         </div>
       </section>
 
@@ -320,7 +334,7 @@ function BalanceCard({
           </p>
           {sessionPnl !== 0 && (
             <p className="mt-3 text-xs text-[var(--muted)]">
-              In-app live trades this session:{" "}
+              In-app live trades closed today:{" "}
               <span className={sessionPnl >= 0 ? "text-[var(--accent)]" : "text-[var(--danger)]"}>
                 {formatUsd(sessionPnl)}
               </span>
@@ -344,7 +358,7 @@ function BalanceCard({
               </dd>
             </div>
             <div>
-              <dt className="text-[var(--muted)]">Session P&L</dt>
+              <dt className="text-[var(--muted)]">Today&apos;s P&L</dt>
               <dd
                 className={`font-medium ${
                   sessionPnl >= 0 ? "text-[var(--accent)]" : "text-[var(--danger)]"

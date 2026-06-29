@@ -7,6 +7,15 @@ import {
   hasLiveCredentials,
 } from "./broker-config";
 import { DEFAULT_STARTING_BALANCE } from "./account-utils";
+import {
+  parseAlpacaOrderFill,
+  isFilledOrderStatus,
+  isTerminalOrderStatus,
+  type AlpacaOrderFill,
+} from "./alpaca-order-fill";
+
+export type { AlpacaOrderFill };
+export { parseAlpacaOrderFill, isFilledOrderStatus, isTerminalOrderStatus } from "./alpaca-order-fill";
 
 const ALPACA_DATA_URL = "https://data.alpaca.markets/v2";
 const ALPACA_PAPER_URL = "https://paper-api.alpaca.markets";
@@ -19,6 +28,8 @@ export interface AlpacaOrder {
   side: "buy" | "sell";
   type: string;
   status: string;
+  filled_avg_price?: string | null;
+  filled_qty?: string | null;
   stop_price?: string;
   limit_price?: string;
   created_at: string;
@@ -242,6 +253,72 @@ export async function placeOrder(params: {
     throw new Error(`Order failed: ${err}`);
   }
   return res.json();
+}
+
+export async function fetchOrder(
+  orderId: string,
+  paper: boolean
+): Promise<AlpacaOrder> {
+  const creds = paper ? getPaperCredentials() : getLiveCredentials();
+  const res = await fetch(`${getTradingUrl(paper)}/v2/orders/${orderId}`, {
+    headers: getHeaders(creds),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Failed to fetch order ${orderId}: ${err}`);
+  }
+  return res.json();
+}
+
+export async function waitForOrderFill(
+  orderId: string,
+  paper: boolean,
+  options?: { maxAttempts?: number; delayMs?: number }
+): Promise<AlpacaOrderFill> {
+  const maxAttempts = options?.maxAttempts ?? 20;
+  const delayMs = options?.delayMs ?? 400;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const order = await fetchOrder(orderId, paper);
+    const status = order.status ?? "unknown";
+    const fill = parseAlpacaOrderFill(order);
+
+    if (fill && isFilledOrderStatus(status)) {
+      if (status === "filled" || attempt === maxAttempts - 1) {
+        return fill;
+      }
+    }
+
+    if (isTerminalOrderStatus(status)) {
+      throw new Error(`Order ${orderId} ended with status ${status}`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  throw new Error(`Order ${orderId} not filled after ${maxAttempts} attempts`);
+}
+
+export async function placeOrderWithFill(params: {
+  symbol: string;
+  qty: number;
+  side: "buy" | "sell";
+  type?: "market" | "limit";
+  limit_price?: number;
+  paper?: boolean;
+}): Promise<AlpacaOrderFill> {
+  const order = (await placeOrder(params)) as AlpacaOrder;
+  if (!order.id) {
+    throw new Error("Order response missing id");
+  }
+
+  const immediate = parseAlpacaOrderFill(order);
+  if (immediate && order.status === "filled") {
+    return immediate;
+  }
+
+  return waitForOrderFill(order.id, params.paper ?? getBrokerCredentials().paper);
 }
 
 export async function getPositions(paper?: boolean): Promise<AlpacaPosition[]> {

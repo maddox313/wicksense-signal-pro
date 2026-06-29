@@ -1,5 +1,16 @@
 import type { Trade, PerformanceStats } from "./types";
 import { computePerformanceStats } from "./risk";
+import { filterTradesClosedOnDay } from "./trade-calendar";
+
+export {
+  TRADING_CALENDAR_TIMEZONE,
+  getCalendarDayKey,
+  getTradeCloseTimestamp,
+  filterTradesClosedOnDay,
+  getTradeArchiveDayKey,
+  filterArchivedTradesOnDay,
+  getArchivedTradeDayKeys,
+} from "./trade-calendar";
 
 export type SystemProfitability = "profitable" | "not_profitable" | "break_even" | "insufficient_data";
 
@@ -20,6 +31,14 @@ export function getClosedTrades(trades: Trade[]): Trade[] {
   return trades
     .filter((t) => t.status === "closed" && t.pnl !== undefined)
     .sort((a, b) => (a.exitTime ?? a.entryTime) - (b.exitTime ?? b.entryTime));
+}
+
+export function computeTodayPerformanceStats(
+  trades: Trade[],
+  date: Date = new Date(),
+  timeZone?: string
+): PerformanceStats {
+  return computePerformanceStats(filterTradesClosedOnDay(trades, date, timeZone));
 }
 
 export function lossRate(stats: PerformanceStats): number {
@@ -82,6 +101,12 @@ export function buildTradePnLSeries(trades: Trade[], limit = 30): TradePnLPoint[
 
 export function statsForTrades(trades: Trade[]): PerformanceStats {
   return computePerformanceStats(trades);
+}
+
+/** Trade Analysis cards: count every row in the table (open + closed). */
+export function computeTradeAnalysisStats(trades: Trade[]): PerformanceStats {
+  const closed = computePerformanceStats(trades);
+  return { ...closed, totalTrades: trades.length };
 }
 
 export type {

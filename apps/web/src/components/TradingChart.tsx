@@ -16,6 +16,7 @@ import {
 } from "lightweight-charts";
 import { ema, rsi, bollingerBands } from "@wicksense/core";
 import type { OHLCV, ChartMarker } from "@wicksense/core";
+import { snapMarkerTimeToBars } from "@/lib/chart-marker-utils";
 import { Eraser, TrendingUp } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { type ChartStyle, DEFAULT_CHART_STYLE } from "@/lib/chart-style";
@@ -284,10 +285,17 @@ export function TradingChart({
 
   useEffect(() => {
     if (!markersPluginRef.current) return;
-    const barTimes = new Set(bars.map((b) => b.time));
+    const barTimes = bars.map((b) => b.time);
+    const barTimeSet = new Set(barTimes);
     markersPluginRef.current.setMarkers(
       markers
-        .filter((m) => barTimes.has(m.time))
+        .map((m) => {
+          const time = barTimeSet.has(m.time)
+            ? m.time
+            : snapMarkerTimeToBars(m.time, barTimes);
+          return time == null ? null : { ...m, time };
+        })
+        .filter((m): m is ChartMarker => m != null)
         .map((m) => ({
           time: m.time as Time,
           position: m.side === "buy" ? ("belowBar" as const) : ("aboveBar" as const),

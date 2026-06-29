@@ -14,6 +14,8 @@ import {
   markEngineCycleComplete,
   markEngineCycleStart,
 } from "@/lib/strategy-engine-telemetry";
+import { checkActionRequiredAlerts } from "@/lib/action-required-alerts-client";
+import { checkTradingScheduleAlerts } from "@/lib/trading-schedule-alerts-client";
 
 /**
  * Persistent auto-trade engine — mounted in the app shell so polling, signal
@@ -36,6 +38,8 @@ export function AutoTradeEngine() {
         }
 
         void syncTradesWithAlpaca();
+        void checkTradingScheduleAlerts();
+        void checkActionRequiredAlerts();
         const { multiChartSlots } = useAppStore.getState();
         await runSlotCycle(
           buildMainSlotConfig(),

@@ -32,6 +32,8 @@ function rowToTrade(row: PrismaTrade): Trade {
     stopLossPrice: row.stopLossPrice ?? undefined,
     alpacaOrderId: row.alpacaOrderId ?? undefined,
     alpacaStopOrderId: row.alpacaStopOrderId ?? undefined,
+    archived: row.archived ?? undefined,
+    archivedAt: row.archivedAt?.getTime(),
   };
 }
 
@@ -57,6 +59,8 @@ function tradeToRow(trade: Trade, userId: string) {
     stopLossPrice: trade.stopLossPrice ?? null,
     alpacaOrderId: trade.alpacaOrderId ?? null,
     alpacaStopOrderId: trade.alpacaStopOrderId ?? null,
+    archived: trade.archived ?? false,
+    archivedAt: trade.archivedAt ? new Date(trade.archivedAt) : null,
   };
 }
 
@@ -105,10 +109,57 @@ export async function ensureTradeStoreReady(): Promise<string> {
 export async function getAllTrades(): Promise<Trade[]> {
   const userId = await ensureTradeStoreReady();
   const rows = await prisma.trade.findMany({
-    where: { userId },
+    where: { userId, archived: false },
     orderBy: { entryTime: "desc" },
   });
   return rows.map(rowToTrade);
+}
+
+export async function getArchivedTrades(): Promise<Trade[]> {
+  const userId = await ensureTradeStoreReady();
+  const rows = await prisma.trade.findMany({
+    where: { userId, archived: true },
+    orderBy: { entryTime: "desc" },
+  });
+  return rows.map(rowToTrade);
+}
+
+export async function archiveTrades(params: {
+  tradeIds?: string[];
+  archiveAllClosed?: boolean;
+  mode?: TradeMode;
+}): Promise<{ archived: number; trades: Trade[] }> {
+  const userId = await ensureTradeStoreReady();
+  const now = new Date();
+
+  let toArchive: Trade[] = [];
+  if (params.tradeIds?.length) {
+    const rows = await prisma.trade.findMany({
+      where: { userId, id: { in: params.tradeIds }, archived: false },
+    });
+    toArchive = rows.map(rowToTrade).filter((t) => t.status === "closed");
+  } else if (params.archiveAllClosed) {
+    const rows = await prisma.trade.findMany({
+      where: {
+        userId,
+        archived: false,
+        status: "closed",
+        ...(params.mode ? { mode: params.mode } : {}),
+      },
+    });
+    toArchive = rows.map(rowToTrade);
+  }
+
+  if (toArchive.length === 0) {
+    return { archived: 0, trades: await getAllTrades() };
+  }
+
+  await prisma.trade.updateMany({
+    where: { userId, id: { in: toArchive.map((t) => t.id) } },
+    data: { archived: true, archivedAt: now },
+  });
+
+  return { archived: toArchive.length, trades: await getAllTrades() };
 }
 
 export async function setAllTrades(next: Trade[]): Promise<void> {
@@ -125,6 +176,7 @@ export async function getOpenTrades(mode?: TradeMode): Promise<Trade[]> {
     where: {
       userId,
       status: "open",
+      archived: false,
       ...(mode ? { mode } : {}),
     },
     orderBy: { entryTime: "desc" },
@@ -240,7 +292,7 @@ export async function upsertTrade(trade: Trade): Promise<Trade> {
 
 export async function deleteTradesByMode(mode: TradeMode): Promise<number> {
   const userId = await ensureTradeStoreReady();
-  const result = await prisma.trade.deleteMany({ where: { userId, mode } });
+  const result = await prisma.trade.deleteMany({ where: { userId, mode, archived: false } });
   return result.count;
 }
 

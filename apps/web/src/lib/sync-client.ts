@@ -1,4 +1,6 @@
 import { useAppStore, type PositionSyncModeStatus } from "@/lib/store";
+import { mergeTradeEntryMarkers } from "@/lib/chart-marker-utils";
+import type { ModeUnrealizedPnlSnapshot } from "@/lib/alpaca-unrealized-pnl-shared";
 
 export interface ClientSyncResponse {
   trades: ReturnType<typeof useAppStore.getState>["trades"];
@@ -6,6 +8,10 @@ export interface ClientSyncResponse {
   sync?: {
     paper: PositionSyncModeStatus;
     live: PositionSyncModeStatus;
+  };
+  unrealizedPnl?: {
+    paper: ModeUnrealizedPnlSnapshot;
+    live: ModeUnrealizedPnlSnapshot;
   };
   updatedAt?: string;
 }
@@ -31,7 +37,9 @@ export async function syncTradesWithAlpaca(): Promise<ClientSyncResponse | null>
 
     const data = (await res.json()) as ClientSyncResponse;
     store.setTrades(data.trades ?? []);
+    mergeTradeEntryMarkers(data.trades ?? []);
     if (data.performance) store.setPerformance(data.performance);
+    if (data.unrealizedPnl) store.setUnrealizedPnl(data.unrealizedPnl);
 
     store.setSyncStatus({
       loading: false,

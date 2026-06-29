@@ -64,6 +64,8 @@ model Trade {
   stopLossPrice     Float?
   alpacaOrderId     String?
   alpacaStopOrderId String?
+  archived          Boolean   @default(false)
+  archivedAt        DateTime?
   createdAt         DateTime  @default(now())
 }
 

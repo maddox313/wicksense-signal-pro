@@ -8,6 +8,7 @@ import { SignalPanel } from "@/components/SignalPanel";
 import { MarketDataPanel } from "@/components/MarketDataPanel";
 import { ShoppingCart, DollarSign } from "lucide-react";
 import { executeSlotTrade } from "@/lib/autoTradeRunner";
+import { filterMarkersForSymbol } from "@/lib/chart-marker-utils";
 import { MAIN_CHART_SLOT } from "@/lib/chart-slots";
 
 const TradingChart = dynamic(
@@ -35,6 +36,7 @@ export default function ChartPage() {
 
   const marketData = slotMarketData[MAIN_CHART_SLOT] ?? EMPTY_SLOT_MARKET_DATA;
   const { bars, quote, loading, refreshing, fetchError, dataSource } = marketData;
+  const visibleMarkers = filterMarkersForSymbol(markers, symbol);
   const initialLoad = loading && bars.length === 0;
   const [tradeBlockMessage, setTradeBlockMessage] = useState<string | null>(null);
 
@@ -117,7 +119,7 @@ export default function ChartPage() {
             <TradingChart
               slotId={MAIN_CHART_SLOT}
               bars={bars}
-              markers={markers}
+              markers={visibleMarkers}
               onClearMarkers={clearMarkers}
               refreshing={refreshing}
             />

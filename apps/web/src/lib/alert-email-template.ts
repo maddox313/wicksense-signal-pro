@@ -1,7 +1,14 @@
 import { ALL_STRATEGIES } from "@wicksense/core";
 import type { TradeMode } from "@wicksense/core";
 
-export type AlertEmailType = "buy" | "sell" | "stop_loss" | "safety_stop";
+export type AlertEmailType =
+  | "buy"
+  | "sell"
+  | "stop_loss"
+  | "safety_stop"
+  | "trading_started"
+  | "trading_stopped"
+  | "action_required";
 
 export interface TradeAlertDetails {
   symbol?: string;
@@ -13,6 +20,29 @@ export interface TradeAlertDetails {
   timestamp?: number;
   reason?: string;
   stopLossPrice?: number;
+}
+
+export interface SessionAlertDetails extends TradeAlertDetails {
+  statusLabel?: string;
+  scheduleSummary?: string;
+  startTimeEt?: string;
+  stopTimeEt?: string;
+  stopReason?: string;
+  autoTradeStatus?: string;
+  enabledMarkets?: string[];
+  enabledStrategies?: string[];
+  presetName?: string;
+  footerMessage?: string;
+  tradesOpenedToday?: number;
+  tradesClosedToday?: number;
+  winsToday?: number;
+  lossesToday?: number;
+  todayPnl?: number;
+  openPositionsRemaining?: number;
+  problemReason?: string;
+  recommendedStep?: string;
+  affectedSymbol?: string;
+  affectedStrategy?: string;
 }
 
 export interface AlertEmailContent {
@@ -39,11 +69,25 @@ const SELL_THEME = {
   label: "SELL",
 };
 
-const NEUTRAL_THEME = {
-  accent: "#6366f1",
-  accentDark: "#4f46e5",
-  accentLight: "#eef2ff",
-  label: "ALERT",
+const START_THEME = {
+  accent: "#10b981",
+  accentDark: "#059669",
+  accentLight: "#ecfdf5",
+  label: "STARTED",
+};
+
+const STOP_THEME = {
+  accent: "#d97706",
+  accentDark: "#92400e",
+  accentLight: "#fffbeb",
+  label: "STOPPED",
+};
+
+const ACTION_THEME = {
+  accent: "#ef4444",
+  accentDark: "#dc2626",
+  accentLight: "#fef2f2",
+  label: "ACTION REQUIRED",
 };
 
 function escapeHtml(value: string): string {
@@ -80,9 +124,19 @@ function formatTimestamp(timestamp?: number): string {
   });
 }
 
+const NEUTRAL_THEME = {
+  accent: "#6366f1",
+  accentDark: "#4f46e5",
+  accentLight: "#eef2ff",
+  label: "ALERT",
+};
+
 function alertTheme(type: AlertEmailType) {
   if (type === "buy") return BUY_THEME;
   if (type === "sell") return SELL_THEME;
+  if (type === "trading_started") return START_THEME;
+  if (type === "trading_stopped") return STOP_THEME;
+  if (type === "action_required") return ACTION_THEME;
   return NEUTRAL_THEME;
 }
 
@@ -91,15 +145,31 @@ function alertHeadline(type: AlertEmailType): string {
   if (type === "sell") return "SELL Alert";
   if (type === "stop_loss") return "Stop Loss Alert";
   if (type === "safety_stop") return "Safety Stop Alert";
+  if (type === "trading_started") return "Trading Started";
+  if (type === "trading_stopped") return "Trading Stopped";
+  if (type === "action_required") return "Action Required";
   return "Trade Alert";
 }
 
-function buildSubject(type: AlertEmailType, details?: TradeAlertDetails): string {
+function buildSubject(type: AlertEmailType, details?: SessionAlertDetails): string {
+  if (type === "trading_started") return "WickSense Alert: Trading Started";
+  if (type === "trading_stopped") return "WickSense Alert: Trading Stopped";
+  if (type === "action_required") return "WickSense Alert: Action Required";
   const direction = type === "buy" || type === "sell" ? type.toUpperCase() : alertHeadline(type);
   if (details?.symbol && (type === "buy" || type === "sell")) {
     return `WickSense Alert: ${direction} ${details.symbol.toUpperCase()}`;
   }
   return `WickSense Alert: ${direction}`;
+}
+
+function listField(items?: string[]): string {
+  if (!items || items.length === 0) return "—";
+  return items.join(", ");
+}
+
+function formatUsd(value?: number): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  return `$${value.toFixed(2)}`;
 }
 
 function detailRow(label: string, value: string): string {
@@ -256,6 +326,151 @@ function buildTradeText(
   return lines.join("\n");
 }
 
+function buildSessionHtml(
+  type: "trading_started" | "trading_stopped" | "action_required",
+  message: string,
+  details?: SessionAlertDetails
+): string {
+  const theme = alertTheme(type);
+  const rows: string[] = [];
+
+  if (details?.statusLabel) rows.push(detailRow("Status", details.statusLabel));
+  if (type === "trading_started" && details?.startTimeEt) {
+    rows.push(detailRow("Start Time", details.startTimeEt));
+  }
+  if ((type === "trading_stopped" || type === "action_required") && details?.stopTimeEt) {
+    rows.push(detailRow("Time", details.stopTimeEt));
+  }
+  if (details?.stopReason) rows.push(detailRow("Reason", details.stopReason));
+  if (details?.problemReason) rows.push(detailRow("Problem", details.problemReason));
+  if (details?.scheduleSummary) rows.push(detailRow("Trading Schedule", details.scheduleSummary));
+  if (details?.mode) rows.push(detailRow("Mode", formatMode(details.mode)));
+  if (details?.autoTradeStatus) rows.push(detailRow("Auto Mode", details.autoTradeStatus));
+  if (details?.presetName) rows.push(detailRow("Active Preset", details.presetName));
+  if (details?.enabledMarkets?.length) {
+    rows.push(detailRow("Markets", listField(details.enabledMarkets)));
+  }
+  if (details?.enabledStrategies?.length) {
+    rows.push(
+      detailRow(
+        "Strategies",
+        `${details.enabledStrategies.length} enabled — ${listField(details.enabledStrategies)}`
+      )
+    );
+  }
+  if (details?.affectedSymbol) rows.push(detailRow("Symbol", details.affectedSymbol.toUpperCase()));
+  if (details?.affectedStrategy) {
+    rows.push(detailRow("Strategy", formatStrategyLabel(details.affectedStrategy)));
+  }
+
+  if (type === "trading_stopped") {
+    if (details?.tradesOpenedToday != null) {
+      rows.push(detailRow("Trades Opened Today", String(details.tradesOpenedToday)));
+    }
+    if (details?.tradesClosedToday != null) {
+      rows.push(detailRow("Trades Closed Today", String(details.tradesClosedToday)));
+    }
+    if (details?.winsToday != null) rows.push(detailRow("Wins Today", String(details.winsToday)));
+    if (details?.lossesToday != null) rows.push(detailRow("Losses Today", String(details.lossesToday)));
+    if (details?.todayPnl != null) rows.push(detailRow("Today's P&L", formatUsd(details.todayPnl)));
+    if (details?.openPositionsRemaining != null) {
+      rows.push(detailRow("Open Positions", String(details.openPositionsRemaining)));
+    }
+  }
+
+  const footer = details?.footerMessage?.trim() || message;
+  const recommended = details?.recommendedStep?.trim();
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(buildSubject(type, details))}</title>
+</head>
+<body style="margin:0;padding:0;background:#0b0f14;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0b0f14;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#111827;border:1px solid #1f2937;border-radius:16px;overflow:hidden;">
+          <tr>
+            <td style="background:${theme.accentDark};padding:28px 32px;">
+              <p style="margin:0 0 6px;color:rgba(255,255,255,0.85);font-size:13px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;">WickSense Signal Pro</p>
+              <p style="margin:0;color:#ffffff;font-size:28px;font-weight:700;line-height:1.2;">${escapeHtml(alertHeadline(type))}</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <p style="margin:0 0 24px;color:#f8fafc;font-size:16px;line-height:1.6;">${escapeHtml(footer)}</p>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-top:1px solid #1f2937;">
+                ${rows.join("")}
+              </table>
+              ${
+                recommended
+                  ? `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:24px;background:#111827;border:1px solid #1f2937;border-radius:12px;">
+                <tr><td style="padding:20px 24px;">
+                  <p style="margin:0 0 8px;color:#94a3b8;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">Recommended Next Step</p>
+                  <p style="margin:0;color:#e5e7eb;font-size:14px;line-height:1.6;">${escapeHtml(recommended)}</p>
+                </td></tr></table>`
+                  : ""
+              }
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 32px 28px;">
+              <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">This is an automated WickSense alert.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+function buildSessionText(
+  type: "trading_started" | "trading_stopped" | "action_required",
+  message: string,
+  details?: SessionAlertDetails
+): string {
+  const lines = ["WickSense Signal Pro", alertHeadline(type), ""];
+
+  if (details?.statusLabel) lines.push(`Status: ${details.statusLabel}`);
+  if (type === "trading_started" && details?.startTimeEt) lines.push(`Start Time: ${details.startTimeEt}`);
+  if (details?.stopTimeEt) lines.push(`Time: ${details.stopTimeEt}`);
+  if (details?.stopReason) lines.push(`Reason: ${details.stopReason}`);
+  if (details?.problemReason) lines.push(`Problem: ${details.problemReason}`);
+  if (details?.scheduleSummary) lines.push(`Trading Schedule: ${details.scheduleSummary}`);
+  if (details?.mode) lines.push(`Mode: ${formatMode(details.mode)}`);
+  if (details?.autoTradeStatus) lines.push(`Auto Mode: ${details.autoTradeStatus}`);
+  if (details?.presetName) lines.push(`Active Preset: ${details.presetName}`);
+  if (details?.enabledMarkets?.length) lines.push(`Markets: ${listField(details.enabledMarkets)}`);
+  if (details?.enabledStrategies?.length) {
+    lines.push(`Strategies (${details.enabledStrategies.length}): ${listField(details.enabledStrategies)}`);
+  }
+  if (details?.affectedSymbol) lines.push(`Symbol: ${details.affectedSymbol.toUpperCase()}`);
+  if (details?.affectedStrategy) lines.push(`Strategy: ${formatStrategyLabel(details.affectedStrategy)}`);
+
+  if (type === "trading_stopped") {
+    if (details?.tradesOpenedToday != null) lines.push(`Trades Opened Today: ${details.tradesOpenedToday}`);
+    if (details?.tradesClosedToday != null) lines.push(`Trades Closed Today: ${details.tradesClosedToday}`);
+    if (details?.winsToday != null) lines.push(`Wins Today: ${details.winsToday}`);
+    if (details?.lossesToday != null) lines.push(`Losses Today: ${details.lossesToday}`);
+    if (details?.todayPnl != null) lines.push(`Today's P&L: ${formatUsd(details.todayPnl)}`);
+    if (details?.openPositionsRemaining != null) {
+      lines.push(`Open Positions Remaining: ${details.openPositionsRemaining}`);
+    }
+  }
+
+  lines.push("", details?.footerMessage?.trim() || message);
+  if (details?.recommendedStep?.trim()) {
+    lines.push("", "Recommended Next Step:", details.recommendedStep.trim());
+  }
+  lines.push("", "This is an automated WickSense alert.");
+  return lines.join("\n");
+}
+
 function buildGenericHtml(type: AlertEmailType, message: string): string {
   const theme = alertTheme(type);
   return `<!DOCTYPE html>
@@ -308,8 +523,16 @@ function buildGenericText(type: AlertEmailType, message: string): string {
 export function buildAlertEmailContent(
   type: AlertEmailType,
   message: string,
-  details?: TradeAlertDetails
+  details?: SessionAlertDetails
 ): AlertEmailContent {
+  if (type === "trading_started" || type === "trading_stopped" || type === "action_required") {
+    return {
+      subject: buildSubject(type, details),
+      text: buildSessionText(type, message, details),
+      html: buildSessionHtml(type, message, details),
+    };
+  }
+
   const isTradeAlert =
     (type === "buy" || type === "sell") &&
     Boolean(details?.symbol || details?.quantity != null || details?.entryPrice != null);

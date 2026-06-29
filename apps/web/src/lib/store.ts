@@ -19,6 +19,11 @@ import {
   loadChartStyles,
   persistChartStyles,
 } from "./chart-style";
+import { loadChartMarkers, persistChartMarkers } from "./chart-markers-persist";
+import {
+  type ModeUnrealizedPnlSnapshot,
+  EMPTY_MODE_UNREALIZED,
+} from "./alpaca-unrealized-pnl-shared";
 import { loadMainChartPrefs, persistMainChartPrefs } from "./main-chart-prefs";
 
 export interface SlotMarketData {
@@ -61,6 +66,13 @@ export interface SyncStatusState {
   live: PositionSyncModeStatus | null;
   error: string | null;
 }
+
+export const EMPTY_UNREALIZED_PNL = {
+  paper: { ...EMPTY_MODE_UNREALIZED, mode: "paper" as const },
+  live: { ...EMPTY_MODE_UNREALIZED, mode: "live" as const },
+};
+
+export type { ModeUnrealizedPnlSnapshot };
 
 export const EMPTY_SYNC_STATUS: SyncStatusState = {
   lastSyncTime: null,
@@ -109,6 +121,7 @@ interface AppState {
   multiChartSlots: MultiChartSlot[];
   slotMarketData: Record<string, SlotMarketData>;
   syncStatus: SyncStatusState;
+  unrealizedPnl: { paper: ModeUnrealizedPnlSnapshot; live: ModeUnrealizedPnlSnapshot };
   tradingSchedule: TradingScheduleSettings;
   chartStyles: Record<string, ChartStyle>;
 
@@ -136,12 +149,14 @@ interface AppState {
   clearMultiChartMarkers: (slotId: string) => void;
   patchSlotMarketData: (slotId: string, patch: Partial<SlotMarketData>) => void;
   setSyncStatus: (status: Partial<SyncStatusState>) => void;
+  setUnrealizedPnl: (snapshot: { paper: ModeUnrealizedPnlSnapshot; live: ModeUnrealizedPnlSnapshot }) => void;
   setTradingSchedule: (schedule: TradingScheduleSettings) => void;
   setChartStyle: (slotId: string, style: ChartStyle) => void;
 }
 
 export const useAppStore = create<AppState>((set) => {
   const mainChartPrefs = loadMainChartPrefs();
+  const persistedMarkers = loadChartMarkers();
 
   return {
   symbol: mainChartPrefs.symbol,
@@ -149,7 +164,7 @@ export const useAppStore = create<AppState>((set) => {
   tradingStyle: mainChartPrefs.tradingStyle,
   mode: "paper",
   autoTradeEnabled: false,
-  markers: [],
+  markers: persistedMarkers.main,
   trades: [],
   signals: [],
   presets: [],
@@ -159,9 +174,13 @@ export const useAppStore = create<AppState>((set) => {
   performance: null,
   safetyStopActive: false,
   consecutiveLosses: 0,
-  multiChartSlots: DEFAULT_MULTI_SLOTS,
+  multiChartSlots: DEFAULT_MULTI_SLOTS.map((slot) => ({
+    ...slot,
+    markers: persistedMarkers.slots[slot.id] ?? [],
+  })),
   slotMarketData: createInitialSlotMarketData(),
   syncStatus: { ...EMPTY_SYNC_STATUS },
+  unrealizedPnl: { ...EMPTY_UNREALIZED_PNL },
   tradingSchedule: { ...DEFAULT_TRADING_SCHEDULE },
   chartStyles: loadChartStyles(),
 
@@ -200,9 +219,21 @@ export const useAppStore = create<AppState>((set) => {
   addMarker: (marker) =>
     set((s) => {
       const withoutDuplicate = s.markers.filter((m) => m.id !== marker.id);
-      return { markers: [...withoutDuplicate, marker] };
+      const markers = [...withoutDuplicate, marker].slice(-100);
+      persistChartMarkers({
+        main: markers,
+        slots: Object.fromEntries(s.multiChartSlots.map((slot) => [slot.id, slot.markers])),
+      });
+      return { markers };
     }),
-  clearMarkers: () => set({ markers: [] }),
+  clearMarkers: () =>
+    set((s) => {
+      persistChartMarkers({
+        main: [],
+        slots: Object.fromEntries(s.multiChartSlots.map((slot) => [slot.id, slot.markers])),
+      });
+      return { markers: [] };
+    }),
   addTrade: (trade) =>
     set((s) => {
       const withoutDuplicate = s.trades.filter((t) => t.id !== trade.id);
@@ -233,25 +264,35 @@ export const useAppStore = create<AppState>((set) => {
       ),
     })),
   addMultiChartMarker: (slotId, marker) =>
-    set((s) => ({
-      multiChartSlots: s.multiChartSlots.map((slot) =>
+    set((s) => {
+      const multiChartSlots = s.multiChartSlots.map((slot) =>
         slot.id === slotId
           ? {
               ...slot,
               markers: [
                 ...slot.markers.filter((m) => m.id !== marker.id),
                 marker,
-              ],
+              ].slice(-100),
             }
           : slot
-      ),
-    })),
+      );
+      persistChartMarkers({
+        main: s.markers,
+        slots: Object.fromEntries(multiChartSlots.map((slot) => [slot.id, slot.markers])),
+      });
+      return { multiChartSlots };
+    }),
   clearMultiChartMarkers: (slotId) =>
-    set((s) => ({
-      multiChartSlots: s.multiChartSlots.map((slot) =>
+    set((s) => {
+      const multiChartSlots = s.multiChartSlots.map((slot) =>
         slot.id === slotId ? { ...slot, markers: [] } : slot
-      ),
-    })),
+      );
+      persistChartMarkers({
+        main: s.markers,
+        slots: Object.fromEntries(multiChartSlots.map((slot) => [slot.id, slot.markers])),
+      });
+      return { multiChartSlots };
+    }),
   patchSlotMarketData: (slotId, patch) =>
     set((s) => ({
       slotMarketData: {
@@ -263,6 +304,7 @@ export const useAppStore = create<AppState>((set) => {
     set((s) => ({
       syncStatus: { ...s.syncStatus, ...status },
     })),
+  setUnrealizedPnl: (unrealizedPnl) => set({ unrealizedPnl }),
   setTradingSchedule: (tradingSchedule) => set({ tradingSchedule }),
   setChartStyle: (slotId, style) =>
     set((s) => {

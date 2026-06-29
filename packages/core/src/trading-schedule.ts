@@ -106,6 +106,52 @@ export function evaluateTradingSchedule(
   };
 }
 
+const WEEKDAY_LABELS: Record<WeekdayKey, string> = {
+  sun: "Sun",
+  mon: "Mon",
+  tue: "Tue",
+  wed: "Wed",
+  thu: "Thu",
+  fri: "Fri",
+  sat: "Sat",
+};
+
+export function formatTradingScheduleSummary(settings: TradingScheduleSettings): string {
+  if (settings.unrestricted) {
+    return "Unrestricted (24/7 trading)";
+  }
+
+  const activeDays = WEEKDAY_KEYS.filter((key) => settings.days[key])
+    .map((key) => WEEKDAY_LABELS[key])
+    .join(", ");
+  const daysLabel = activeDays || "No days selected";
+  let summary = `${settings.startTime}–${settings.endTime} ET on ${daysLabel}`;
+
+  const extras: string[] = [];
+  if (settings.allowAfterHours) extras.push("after-hours sessions");
+  if (settings.allowOvernight) extras.push("overnight sessions");
+  if (extras.length > 0) {
+    summary += `; includes ${extras.join(" and ")}`;
+  }
+
+  return summary;
+}
+
+export function buildScheduleAlertMessage(
+  event: "started" | "stopped",
+  settings: TradingScheduleSettings,
+  evaluation?: TradingScheduleEvaluation
+): string {
+  const schedule = formatTradingScheduleSummary(settings);
+
+  if (event === "started") {
+    return `WickSense has started trading for you. Your trading window is active per your user settings: ${schedule}.`;
+  }
+
+  const reason = evaluation?.reason ?? "Outside your allowed trading hours (Eastern Time)";
+  return `WickSense has stopped trading for the day. Reason: ${reason}. This is based on your user settings (${schedule}).`;
+}
+
 export function normalizeTradingSchedule(
   raw: Partial<TradingScheduleSettings> | undefined
 ): TradingScheduleSettings {

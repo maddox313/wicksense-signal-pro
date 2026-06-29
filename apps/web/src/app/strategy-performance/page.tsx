@@ -9,6 +9,8 @@ import {
 } from "@wicksense/core";
 import { useAppStore } from "@/lib/store";
 import { syncTradesWithAlpaca } from "@/lib/sync-client";
+import { lookupUnrealizedForOpenTrade } from "@/lib/alpaca-unrealized-pnl-shared";
+import { UnrealizedPnlDisplay } from "@/components/UnrealizedPnlDisplay";
 import {
   bootstrapGeneratedFromSignals,
   loadSignalActivities,
@@ -52,7 +54,7 @@ function formatTimestamp(ms: number | null | undefined): string {
 }
 
 export default function StrategyPerformancePage() {
-  const { trades, signals, presets, activePresetId } = useAppStore();
+  const { trades, signals, presets, activePresetId, unrealizedPnl } = useAppStore();
   const [modeFilter, setModeFilter] = useState<ModeFilter>("all");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [activityVersion, setActivityVersion] = useState(0);
@@ -442,7 +444,14 @@ export default function StrategyPerformancePage() {
                     <td className="px-3 py-3 text-[var(--muted)]">{record.label}</td>
                     <td className="px-3 py-3">{record.quantity}</td>
                     <td className="px-3 py-3">
-                      {record.pnl === undefined ? (
+                      {record.status === "open" ? (
+                        <UnrealizedPnlDisplay
+                          position={lookupUnrealizedForOpenTrade(
+                            record,
+                            record.mode === "live" ? unrealizedPnl.live : unrealizedPnl.paper
+                          )}
+                        />
+                      ) : record.pnl === undefined ? (
                         <span className="text-[var(--muted)]">—</span>
                       ) : (
                         <span

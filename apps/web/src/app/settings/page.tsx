@@ -150,6 +150,9 @@ export default function SettingsPage() {
             <Toggle label="Alert on Sell" checked={alertSettings.onSell} onChange={(v) => updateAlert("onSell", v)} />
             <Toggle label="Alert on Stop Loss" checked={alertSettings.onStopLoss} onChange={(v) => updateAlert("onStopLoss", v)} />
             <Toggle label="Alert on Safety Stop" checked={alertSettings.onSafetyStop} onChange={(v) => updateAlert("onSafetyStop", v)} />
+            <Toggle label="Alert when Trading Starts" checked={alertSettings.onTradingStart ?? true} onChange={(v) => updateAlert("onTradingStart", v)} />
+            <Toggle label="Alert when Trading Stops" checked={alertSettings.onTradingStop ?? true} onChange={(v) => updateAlert("onTradingStop", v)} />
+            <Toggle label="Alert when Action Required" checked={alertSettings.onActionRequired ?? true} onChange={(v) => updateAlert("onActionRequired", v)} />
           </div>
         </section>
 

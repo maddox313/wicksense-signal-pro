@@ -2,10 +2,20 @@ import type { AlertSettings } from "@wicksense/core";
 import nodemailer from "nodemailer";
 import {
   buildAlertEmailContent,
+  type SessionAlertDetails,
   type TradeAlertDetails,
 } from "@/lib/alert-email-template";
 
-export type { TradeAlertDetails };
+export type { TradeAlertDetails, SessionAlertDetails };
+
+export type AlertType =
+  | "buy"
+  | "sell"
+  | "stop_loss"
+  | "safety_stop"
+  | "trading_started"
+  | "trading_stopped"
+  | "action_required";
 
 export interface AlertProviderStatus {
   email: "resend" | "sendgrid" | "smtp" | "none";
@@ -27,23 +37,36 @@ function twilioStatus(): "twilio" | "none" {
     : "none";
 }
 
-export async function sendAlert(
-  userId: string,
-  type: "buy" | "sell" | "stop_loss" | "safety_stop",
-  message: string,
-  settings: AlertSettings,
-  contact: { email?: string; phone?: string },
-  details?: TradeAlertDetails
-) {
-  const channels: { channel: string; sent: boolean; error?: string }[] = [];
-
-  const typeEnabled =
+function isTypeEnabled(type: AlertType, settings: AlertSettings): boolean {
+  return (
     (type === "buy" && settings.onBuy) ||
     (type === "sell" && settings.onSell) ||
     (type === "stop_loss" && settings.onStopLoss) ||
-    (type === "safety_stop" && settings.onSafetyStop);
+    (type === "safety_stop" && settings.onSafetyStop) ||
+    (type === "trading_started" && settings.onTradingStart) ||
+    (type === "trading_stopped" && settings.onTradingStop) ||
+    (type === "action_required" && settings.onActionRequired)
+  );
+}
 
-  if (!typeEnabled) {
+function smsPrefix(type: AlertType): string {
+  if (type === "trading_started") return "WickSense: Trading started";
+  if (type === "trading_stopped") return "WickSense: Trading stopped";
+  if (type === "action_required") return "WickSense: Action required";
+  return "WickSense";
+}
+
+export async function sendAlert(
+  userId: string,
+  type: AlertType,
+  message: string,
+  settings: AlertSettings,
+  contact: { email?: string; phone?: string },
+  details?: SessionAlertDetails
+) {
+  const channels: { channel: string; sent: boolean; error?: string }[] = [];
+
+  if (!isTypeEnabled(type, settings)) {
     console.warn(`[Alert skipped] ${type} alerts disabled in settings`);
     return channels;
   }
@@ -69,7 +92,7 @@ export async function sendAlert(
 
   if (settings.smsEnabled && contact.phone) {
     try {
-      await sendSms(contact.phone, `WickSense: ${message}`);
+      await sendSms(contact.phone, `${smsPrefix(type)}: ${message}`);
       channels.push({ channel: "sms", sent: true });
     } catch (err) {
       const error = err instanceof Error ? err.message : "SMS send failed";

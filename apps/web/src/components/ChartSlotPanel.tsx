@@ -6,6 +6,7 @@ import { computePerformanceStats } from "@wicksense/core";
 import { useAppStore, EMPTY_SLOT_MARKET_DATA } from "@/lib/store";
 import type { MultiChartSlot } from "@/lib/store";
 import { executeSlotTrade } from "@/lib/autoTradeRunner";
+import { filterMarkersForSymbol } from "@/lib/chart-marker-utils";
 import { persistAutoTradeSlot } from "@/lib/auto-trade-client";
 import { ShoppingCart, DollarSign, Play, Pause, ShieldAlert } from "lucide-react";
 
@@ -175,7 +176,7 @@ export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
           <TradingChart
             slotId={slot.id}
             bars={bars}
-            markers={slot.markers}
+            markers={filterMarkersForSymbol(slot.markers, slot.symbol)}
             onClearMarkers={() => clearMultiChartMarkers(slot.id)}
             height={220}
             compact

@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   buildEquityCurve,
   buildTradePnLSeries,
+  computeTodayPerformanceStats,
   evaluateSystemProfitability,
   lossRate,
   statsForTrades,
@@ -44,6 +45,10 @@ export default function PerformanceAnalysisPage() {
   }, [trades, modeFilter]);
 
   const stats = useMemo(() => statsForTrades(filteredTrades), [filteredTrades]);
+  const todayStats = useMemo(
+    () => computeTodayPerformanceStats(filteredTrades),
+    [filteredTrades]
+  );
   const paperStats = useMemo(() => statsForTrades(trades.filter((t) => t.mode === "paper")), [trades]);
   const liveStats = useMemo(() => statsForTrades(trades.filter((t) => t.mode === "live")), [trades]);
   const profitability = useMemo(() => evaluateSystemProfitability(stats), [stats]);
@@ -75,7 +80,7 @@ export default function PerformanceAnalysisPage() {
 
       <ProfitabilityBanner profitability={profitability} stats={stats} />
 
-      <div className="mb-6 flex gap-2">
+      <div className="mb-6 flex flex-wrap items-center gap-2">
         {(["all", "paper", "live"] as const).map((mode) => (
           <button
             key={mode}
@@ -90,9 +95,14 @@ export default function PerformanceAnalysisPage() {
             {mode === "all" ? "All Trades" : `${mode} Only`}
           </button>
         ))}
+        <span className="rounded-full border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-2.5 py-1 text-[10px] font-medium text-[var(--accent)]">
+          P&L Source: Alpaca Broker Fill Prices
+        </span>
       </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-8">
+      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-9">
+        <StatCard label="Today's P&L" value={`$${todayStats.totalPnl.toFixed(2)}`} positive={todayStats.totalPnl >= 0} negative={todayStats.totalPnl < 0} />
+        <StatCard label="Closed Today" value={String(todayStats.totalTrades)} />
         <StatCard label="Closed Trades" value={String(stats.totalTrades)} />
         <StatCard label="Win Rate" value={`${stats.winRate.toFixed(1)}%`} positive={stats.winRate >= 50} />
         <StatCard label="Loss Rate" value={`${lossRate(stats).toFixed(1)}%`} negative={lossRate(stats) > 50} />
