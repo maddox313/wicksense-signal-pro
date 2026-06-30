@@ -86,6 +86,7 @@ Pre-deploy snapshot: `PRE-SAAS-DEPLOY-BACKUP`
 | Issue | Fix |
 |-------|-----|
 | `sh: prisma: not found` | **Root Directory must be `.`**, not `apps/web`. Build command must be `npm ci --install-strategy=nested && npm run build`. Clear build cache and redeploy latest `development` commit. |
+| `lightningcss.linux-x64-gnu.node` not found | Full `npm ci` from repo root (not `-w` only install). Platform optional deps are in `apps/web` `optionalDependencies`. Clear build cache and redeploy. |
 | Health check 503 | Check `DATABASE_URL` and disk mount |
 | `totalCycles` stays 0 | Confirm `TRADE_ENGINE_ENABLED=true`, check logs |
 | Trades not placing | Open UI once to sync `engine-config.local.json`; check schedule |
