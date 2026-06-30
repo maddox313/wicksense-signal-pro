@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=20.0.0"
+    "node": "^20.19 || ^22.12 || >=24.0"
   },
   "workspaces": [
     "apps/*",
@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "dev": "npm run dev -w @wicksense/web",
-    "build": "npm run db:generate -w @wicksense/web && npm run build -w @wicksense/web",
+    "build": "npm install --install-strategy=nested -w @wicksense/web && npm run build -w @wicksense/web",
     "start:prod": "npm run start:prod -w @wicksense/web",
     "lint": "npm run lint -w @wicksense/web"
   }
