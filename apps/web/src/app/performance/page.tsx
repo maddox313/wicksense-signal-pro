@@ -5,13 +5,18 @@ import { useState } from "react";
 import {
   computeTodayPerformanceStats,
   computeTradeAnalysisStats,
+  isAutoExitMonitoredTrade,
   type PerformanceStats,
+  type Trade,
 } from "@wicksense/core";
 import { useAppStore } from "@/lib/store";
 import {
   UNREALIZED_PNL_TOOLTIP,
   type ModeUnrealizedPnlSnapshot,
 } from "@/lib/alpaca-unrealized-pnl-shared";
+import { closeOpenTrade } from "@/lib/close-trade-client";
+import { syncTradesWithAlpaca } from "@/lib/sync-client";
+import { resetSafetyStopClient } from "@/lib/reset-safety-stop-client";
 import { TradeHistoryTable } from "@/components/TradeHistoryTable";
 import { ArrowRight, Archive, Trash2 } from "lucide-react";
 
@@ -19,12 +24,15 @@ export default function PerformancePage() {
   const {
     trades,
     unrealizedPnl,
+    autoExitStatus,
+    autoTradeEnabled,
+    multiChartSlots,
     setTrades,
     setPerformance,
+    riskSettings,
+    setSafetyStopActive,
+    setConsecutiveLosses,
     clearMarkers,
-    resetSafetyStop,
-    multiChartSlots,
-    updateMultiChartSlot,
     clearMultiChartMarkers,
   } = useAppStore();
   const [clearing, setClearing] = useState(false);
@@ -32,6 +40,8 @@ export default function PerformancePage() {
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [archivingAll, setArchivingAll] = useState(false);
   const [archiveMessage, setArchiveMessage] = useState<string | null>(null);
+  const [closingId, setClosingId] = useState<string | null>(null);
+  const [closeMessage, setCloseMessage] = useState<string | null>(null);
 
   const paperTrades = trades.filter((t) => t.mode === "paper");
   const liveTrades = trades.filter((t) => t.mode === "live");
@@ -41,6 +51,11 @@ export default function PerformancePage() {
   const liveTodayStats = computeTodayPerformanceStats(liveTrades);
 
   const paperClosedCount = paperTrades.filter((t) => t.status === "closed").length;
+  const autoExitOn = autoTradeEnabled || multiChartSlots.some((slot) => slot.autoTradeEnabled);
+  const monitoredOpenTrades =
+    autoExitStatus.monitoredCount > 0
+      ? autoExitStatus.monitoredCount
+      : trades.filter(isAutoExitMonitoredTrade).length;
 
   const applyTradeUpdate = (data: { trades?: typeof trades; performance?: ReturnType<typeof computeTradeAnalysisStats> }) => {
     setTrades(data.trades ?? []);
@@ -69,6 +84,57 @@ export default function PerformancePage() {
       setArchiveMessage("Could not archive trade.");
     } finally {
       setArchivingId(null);
+    }
+  };
+
+  const closeTrade = async (trade: Trade) => {
+    if (
+      !window.confirm(
+        `Close open position: ${trade.quantity} ${trade.symbol} (${trade.mode})? This sends a real ${trade.mode} order.`
+      )
+    ) {
+      return;
+    }
+
+    setClosingId(trade.id);
+    setCloseMessage(null);
+    setArchiveMessage(null);
+
+    try {
+      const result = await closeOpenTrade({
+        trade,
+        riskSettings,
+      });
+
+      if (!result.ok) {
+        setCloseMessage(result.reason ?? "Could not close trade");
+        return;
+      }
+
+      if (result.trades) {
+        setTrades(result.trades);
+      } else if (result.trade) {
+        useAppStore.getState().addTrade(result.trade);
+      }
+      if (result.performance) setPerformance(result.performance);
+      if (result.safetyStopTriggered) setSafetyStopActive(true);
+      if (result.consecutiveLosses !== undefined) setConsecutiveLosses(result.consecutiveLosses);
+
+      try {
+        await syncTradesWithAlpaca();
+      } catch {
+        /* trade already closed in DB */
+      }
+
+      setCloseMessage(
+        result.trade?.exitPrice
+          ? `Closed ${trade.symbol} @ $${result.trade.exitPrice.toFixed(2)}`
+          : `Closed ${trade.symbol}`
+      );
+    } catch (err) {
+      setCloseMessage(err instanceof Error ? err.message : "Could not close trade");
+    } finally {
+      setClosingId(null);
     }
   };
 
@@ -125,10 +191,9 @@ export default function PerformancePage() {
 
       applyTradeUpdate(data);
       clearMarkers();
-      resetSafetyStop();
+      await resetSafetyStopClient("all");
       for (const slot of multiChartSlots) {
         clearMultiChartMarkers(slot.id);
-        updateMultiChartSlot(slot.id, { safetyStopActive: false, consecutiveLosses: 0 });
       }
 
       setClearMessage(
@@ -149,6 +214,15 @@ export default function PerformancePage() {
         <div>
           <h1 className="text-xl font-bold">Trade Analysis</h1>
           <p className="text-sm text-[var(--muted)]">Paper and live trade history by account type</p>
+          {autoExitOn && (
+            <p className="mt-1 text-xs text-[var(--accent)]">
+              Auto Exit: ON · Monitoring {monitoredOpenTrades} open trade
+              {monitoredOpenTrades === 1 ? "" : "s"}
+              {autoExitStatus.lastError ? (
+                <span className="ml-2 text-[var(--danger)]">({autoExitStatus.lastError})</span>
+              ) : null}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <Link
@@ -168,6 +242,18 @@ export default function PerformancePage() {
         </div>
       </header>
 
+      {closeMessage && (
+        <p
+          className={`mb-4 rounded-lg border px-4 py-2 text-sm ${
+            closeMessage.startsWith("Closed")
+              ? "border-[var(--accent)]/30 text-[var(--accent)]"
+              : "border-[var(--danger)]/30 text-[var(--danger)]"
+          }`}
+        >
+          {closeMessage}
+        </p>
+      )}
+
       <TradeModeSection
         title="Paper Trades"
         trades={paperTrades}
@@ -183,6 +269,8 @@ export default function PerformancePage() {
         archiveMessage={archiveMessage}
         archivingId={archivingId}
         onArchive={archiveTrade}
+        closingId={closingId}
+        onClose={closeTrade}
       />
 
       <TradeModeSection
@@ -192,6 +280,8 @@ export default function PerformancePage() {
         todayStats={liveTodayStats}
         unrealizedSnapshot={unrealizedPnl.live}
         className="mt-8"
+        closingId={closingId}
+        onClose={closeTrade}
       />
     </div>
   );
@@ -212,6 +302,8 @@ function TradeModeSection({
   archiveMessage,
   archivingId,
   onArchive,
+  closingId,
+  onClose,
   className = "",
 }: {
   title: string;
@@ -228,6 +320,8 @@ function TradeModeSection({
   archiveMessage?: string | null;
   archivingId?: string | null;
   onArchive?: (tradeId: string) => void;
+  closingId?: string | null;
+  onClose?: (trade: Trade) => void;
   className?: string;
 }) {
   const showArchive = Boolean(onArchive);
@@ -310,6 +404,8 @@ function TradeModeSection({
         showArchiveAction={showArchive}
         archivingId={archivingId}
         onArchive={onArchive}
+        closingId={closingId}
+        onClose={onClose}
         unrealizedSnapshot={unrealizedSnapshot}
       />
     </div>

@@ -28,6 +28,7 @@ import {
   getOpenTrades,
   upsertTrade,
 } from "@/lib/trade-store";
+import { isLegacyPaperBlockSymbol } from "@/lib/legacy-paper-cleanup";
 
 export interface PositionSyncResult {
   mode: "paper" | "live";
@@ -255,6 +256,9 @@ export async function syncAlpacaPositions(
   for (const [, pos] of alpacaByKey) {
     const side = alpacaPositionSide(pos);
     const symbol = pos.symbol;
+    if (mode === "paper" && isLegacyPaperBlockSymbol(symbol)) {
+      continue;
+    }
     const key = positionKey(symbol, side);
 
     const stillOpen = await getOpenTrades(mode);

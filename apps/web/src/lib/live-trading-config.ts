@@ -17,6 +17,10 @@ export function loadLiveTradingSettings(): LiveTradingSettings {
         typeof data.stopLossPercent === "number"
           ? Math.min(20, Math.max(0.5, data.stopLossPercent))
           : DEFAULT_LIVE_TRADING_SETTINGS.stopLossPercent,
+      takeProfitPercent:
+        typeof data.takeProfitPercent === "number"
+          ? Math.min(50, Math.max(0.5, data.takeProfitPercent))
+          : DEFAULT_LIVE_TRADING_SETTINGS.takeProfitPercent,
     };
   } catch {
     return { ...DEFAULT_LIVE_TRADING_SETTINGS };
@@ -34,6 +38,10 @@ export function saveLiveTradingSettings(
       typeof updates.stopLossPercent === "number"
         ? Math.min(20, Math.max(0.5, updates.stopLossPercent))
         : current.stopLossPercent,
+    takeProfitPercent:
+      typeof updates.takeProfitPercent === "number"
+        ? Math.min(50, Math.max(0.5, updates.takeProfitPercent))
+        : current.takeProfitPercent,
   };
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), "utf8");
   return next;

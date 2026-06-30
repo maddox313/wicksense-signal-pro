@@ -61,7 +61,9 @@ export function ChartDataBootstrap() {
       }
       void refreshSlotBarsOnly(slot.id, slot.symbol, slot.timeframe);
     }
-  }, [multiSig, multiChartSlots]);
+    // Only re-fetch when symbol/timeframe change — not when markers or other slot fields update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [multiSig]);
 
   return null;
 }

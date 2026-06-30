@@ -1,66 +1,39 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import {
-  AUTO_TRADE_POLL_MS,
-  buildMainSlotConfig,
-  buildMultiSlotConfig,
-  runSlotCycle,
-} from "@/lib/autoTradeRunner";
+import { useEffect } from "react";
 import { syncTradesWithAlpaca } from "@/lib/sync-client";
-import { ensurePresetsLoaded } from "@/lib/presets-client";
 import { useAppStore } from "@/lib/store";
-import {
-  markEngineCycleComplete,
-  markEngineCycleStart,
-} from "@/lib/strategy-engine-telemetry";
-import { checkActionRequiredAlerts } from "@/lib/action-required-alerts-client";
-import { checkTradingScheduleAlerts } from "@/lib/trading-schedule-alerts-client";
 
-/**
- * Persistent auto-trade engine — mounted in the app shell so polling, signal
- * detection, and execution continue while the user navigates to other pages.
- */
+/** Light UI refresh only — trading runs server-side. */
+const SYNC_MS = 90_000;
+const STATUS_MS = 60_000;
+
 export function AutoTradeEngine() {
-  const runningRef = useRef(false);
-  const lastSignalBySlot = useRef(new Map<string, string>());
-  const symbolTfBySlot = useRef(new Map<string, string>());
+  useEffect(() => {
+    const refresh = () => void syncTradesWithAlpaca();
+    refresh();
+    const interval = setInterval(refresh, SYNC_MS);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
-    const tick = async () => {
-      if (runningRef.current) return;
-      runningRef.current = true;
-      markEngineCycleStart();
+    const pollStatus = async () => {
       try {
-        const presetsReady = await ensurePresetsLoaded();
-        if (!presetsReady) {
-          return;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 12_000);
+        const res = await fetch("/api/trades/engine-status", { signal: controller.signal });
+        clearTimeout(timeout);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.autoExitStatus) {
+          useAppStore.getState().setAutoExitStatus(data.autoExitStatus);
         }
-
-        void syncTradesWithAlpaca();
-        void checkTradingScheduleAlerts();
-        void checkActionRequiredAlerts();
-        const { multiChartSlots } = useAppStore.getState();
-        await runSlotCycle(
-          buildMainSlotConfig(),
-          lastSignalBySlot.current,
-          symbolTfBySlot.current
-        );
-        for (const slot of multiChartSlots) {
-          await runSlotCycle(
-            buildMultiSlotConfig(slot),
-            lastSignalBySlot.current,
-            symbolTfBySlot.current
-          );
-        }
-      } finally {
-        runningRef.current = false;
-        markEngineCycleComplete();
+      } catch {
+        /* non-blocking UI refresh */
       }
     };
-
-    void tick();
-    const interval = setInterval(() => void tick(), AUTO_TRADE_POLL_MS);
+    void pollStatus();
+    const interval = setInterval(() => void pollStatus(), STATUS_MS);
     return () => clearInterval(interval);
   }, []);
 

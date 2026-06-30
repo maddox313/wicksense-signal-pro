@@ -1,7 +1,7 @@
 "use client";
 
 import type { Trade } from "@wicksense/core";
-import { Archive } from "lucide-react";
+import { Archive, X } from "lucide-react";
 import { chartSlotLabel } from "@/lib/chart-slots";
 import { formatTradeDate, formatTradeTime } from "@/lib/trade-format";
 import {
@@ -16,7 +16,13 @@ interface TradeHistoryTableProps {
   showArchiveAction?: boolean;
   archivingId?: string | null;
   onArchive?: (tradeId: string) => void;
+  closingId?: string | null;
+  onClose?: (trade: Trade) => void;
   unrealizedSnapshot?: ModeUnrealizedPnlSnapshot | null;
+}
+
+function canCloseFromAnalysis(trade: Trade): boolean {
+  return trade.status === "open" && (trade.mode === "paper" || trade.mode === "live");
 }
 
 export function TradeHistoryTable({
@@ -25,9 +31,12 @@ export function TradeHistoryTable({
   showArchiveAction = false,
   archivingId = null,
   onArchive,
+  closingId = null,
+  onClose,
   unrealizedSnapshot = null,
 }: TradeHistoryTableProps) {
-  const colSpan = showArchiveAction ? 11 : 10;
+  const showActions = Boolean(onClose || showArchiveAction);
+  const colSpan = showActions ? 11 : 10;
 
   return (
     <div className="overflow-x-auto">
@@ -44,7 +53,7 @@ export function TradeHistoryTable({
             <th className="p-3">P&L</th>
             <th className="p-3">Strategy</th>
             <th className="p-3">Status</th>
-            {showArchiveAction && <th className="p-3">Archive</th>}
+            {showActions && <th className="p-3">Actions</th>}
           </tr>
         </thead>
         <tbody>
@@ -85,9 +94,20 @@ export function TradeHistoryTable({
                 </td>
                 <td className="p-3 text-[var(--muted)]">{t.strategy}</td>
                 <td className="p-3 capitalize">{t.status}</td>
-                {showArchiveAction && (
+                {showActions && (
                   <td className="p-3">
-                    {t.status === "closed" ? (
+                    {t.status === "open" && onClose && canCloseFromAnalysis(t) ? (
+                      <button
+                        type="button"
+                        onClick={() => void onClose(t)}
+                        disabled={closingId === t.id}
+                        title="Close this open position"
+                        className="flex items-center gap-1 rounded border border-[var(--danger)]/40 px-2 py-1 text-xs text-[var(--danger)] hover:bg-[var(--danger)]/10 disabled:opacity-40"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                        {closingId === t.id ? "…" : "Close"}
+                      </button>
+                    ) : t.status === "closed" && showArchiveAction ? (
                       <button
                         type="button"
                         onClick={() => onArchive?.(t.id)}

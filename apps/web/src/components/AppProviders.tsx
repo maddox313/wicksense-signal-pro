@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { AutoTradeEngine } from "@/components/AutoTradeEngine";
 import { ChartDataBootstrap } from "@/components/ChartDataBootstrap";
+import { EngineConfigSync } from "@/components/EngineConfigSync";
 import { useAppStore } from "@/lib/store";
 import { syncTradesWithAlpaca } from "@/lib/sync-client";
 import { loadAutoTradeSettingsIntoStore } from "@/lib/auto-trade-client";
@@ -23,6 +24,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   return (
     <>
+      <EngineConfigSync />
       <ChartDataBootstrap />
       <AutoTradeEngine />
       {children}

@@ -11,11 +11,12 @@ import {
   parseAlpacaOrderFill,
   isFilledOrderStatus,
   isTerminalOrderStatus,
+  isPendingOrderStatus,
   type AlpacaOrderFill,
 } from "./alpaca-order-fill";
 
 export type { AlpacaOrderFill };
-export { parseAlpacaOrderFill, isFilledOrderStatus, isTerminalOrderStatus } from "./alpaca-order-fill";
+export { parseAlpacaOrderFill, isFilledOrderStatus, isTerminalOrderStatus, isPendingOrderStatus } from "./alpaca-order-fill";
 
 const ALPACA_DATA_URL = "https://data.alpaca.markets/v2";
 const ALPACA_PAPER_URL = "https://paper-api.alpaca.markets";
@@ -190,16 +191,15 @@ export async function fetchBars(
       };
     }
 
-    const bars = ((data as { bars?: unknown[] }).bars ?? []).map(
-      (b: { t: string; o: number; h: number; l: number; c: number; v: number }) => ({
-        time: Math.floor(new Date(b.t).getTime() / 1000),
-        open: b.o,
-        high: b.h,
-        low: b.l,
-        close: b.c,
-        volume: b.v,
-      })
-    );
+    type AlpacaBar = { t: string; o: number; h: number; l: number; c: number; v: number };
+    const bars = ((data as { bars?: AlpacaBar[] }).bars ?? []).map((b) => ({
+      time: Math.floor(new Date(b.t).getTime() / 1000),
+      open: b.o,
+      high: b.h,
+      low: b.l,
+      close: b.c,
+      volume: b.v,
+    }));
 
     if (bars.length === 0) {
       return {
@@ -233,20 +233,25 @@ export async function placeOrder(params: {
   type?: "market" | "limit";
   limit_price?: number;
   paper?: boolean;
+  extended_hours?: boolean;
 }) {
   const usePaper = params.paper ?? getBrokerCredentials().paper;
   const creds = usePaper ? getPaperCredentials() : getLiveCredentials();
+  const body: Record<string, unknown> = {
+    symbol: params.symbol,
+    qty: params.qty,
+    side: params.side,
+    type: params.type ?? "market",
+    time_in_force: "day",
+    limit_price: params.limit_price,
+  };
+  if (params.extended_hours) {
+    body.extended_hours = true;
+  }
   const res = await fetch(`${getTradingUrl(usePaper)}/v2/orders`, {
     method: "POST",
     headers: { ...getHeaders(creds), "Content-Type": "application/json" },
-    body: JSON.stringify({
-      symbol: params.symbol,
-      qty: params.qty,
-      side: params.side,
-      type: params.type ?? "market",
-      time_in_force: "day",
-      limit_price: params.limit_price,
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const err = await res.text();
@@ -276,18 +281,27 @@ export async function waitForOrderFill(
   paper: boolean,
   options?: { maxAttempts?: number; delayMs?: number }
 ): Promise<AlpacaOrderFill> {
-  const maxAttempts = options?.maxAttempts ?? 20;
-  const delayMs = options?.delayMs ?? 400;
+  const maxAttempts = options?.maxAttempts ?? 40;
+  const delayMs = options?.delayMs ?? 500;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const order = await fetchOrder(orderId, paper);
     const status = order.status ?? "unknown";
     const fill = parseAlpacaOrderFill(order);
 
-    if (fill && isFilledOrderStatus(status)) {
-      if (status === "filled" || attempt === maxAttempts - 1) {
+    if (status === "filled" && fill) {
+      return fill;
+    }
+
+    if (status === "partially_filled" && fill) {
+      if (attempt >= maxAttempts - 1) {
         return fill;
       }
+    }
+
+    if (status === "done_for_day") {
+      if (fill) return fill;
+      throw new Error(`Order ${orderId} ended for the day without a fill`);
     }
 
     if (isTerminalOrderStatus(status)) {
@@ -297,7 +311,58 @@ export async function waitForOrderFill(
     await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 
-  throw new Error(`Order ${orderId} not filled after ${maxAttempts} attempts`);
+  const final = await fetchOrder(orderId, paper);
+  const finalStatus = final.status ?? "unknown";
+  const finalFill = parseAlpacaOrderFill(final);
+
+  if (finalFill && isFilledOrderStatus(finalStatus)) {
+    return finalFill;
+  }
+
+  if (isPendingOrderStatus(finalStatus)) {
+    throw new Error(
+      `Order ${orderId} is still ${finalStatus} — the market may be closed or the order is queued. Check Alpaca and try again when the market is open.`
+    );
+  }
+
+  throw new Error(`Order ${orderId} not filled after ${maxAttempts} attempts (status: ${finalStatus})`);
+}
+
+export const CLOSE_ORDER_FILL_OPTIONS = { maxAttempts: 60, delayMs: 500 };
+export const ENTRY_ORDER_FILL_OPTIONS = { maxAttempts: 60, delayMs: 500 };
+export const LEGACY_CLEANUP_FILL_OPTIONS = { maxAttempts: 8, delayMs: 300 };
+
+export async function liquidatePositionWithFill(params: {
+  symbol: string;
+  qty: number;
+  paper: boolean;
+  fillOptions?: { maxAttempts?: number; delayMs?: number };
+}): Promise<AlpacaOrderFill> {
+  const creds = params.paper ? getPaperCredentials() : getLiveCredentials();
+  const url = `${getTradingUrl(params.paper)}/v2/positions/${encodeURIComponent(params.symbol)}?qty=${params.qty}`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: getHeaders(creds),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Close position failed: ${err}`);
+  }
+  const order = (await res.json()) as AlpacaOrder;
+  if (!order.id) {
+    throw new Error("Close position response missing order id");
+  }
+
+  const immediate = parseAlpacaOrderFill(order);
+  if (immediate && order.status === "filled") {
+    return immediate;
+  }
+
+  return waitForOrderFill(
+    order.id,
+    params.paper,
+    params.fillOptions ?? CLOSE_ORDER_FILL_OPTIONS
+  );
 }
 
 export async function placeOrderWithFill(params: {
@@ -307,6 +372,8 @@ export async function placeOrderWithFill(params: {
   type?: "market" | "limit";
   limit_price?: number;
   paper?: boolean;
+  extended_hours?: boolean;
+  fillOptions?: { maxAttempts?: number; delayMs?: number };
 }): Promise<AlpacaOrderFill> {
   const order = (await placeOrder(params)) as AlpacaOrder;
   if (!order.id) {
@@ -318,7 +385,11 @@ export async function placeOrderWithFill(params: {
     return immediate;
   }
 
-  return waitForOrderFill(order.id, params.paper ?? getBrokerCredentials().paper);
+  return waitForOrderFill(
+    order.id,
+    params.paper ?? getBrokerCredentials().paper,
+    params.fillOptions
+  );
 }
 
 export async function getPositions(paper?: boolean): Promise<AlpacaPosition[]> {
@@ -339,13 +410,46 @@ export async function getLivePositions(): Promise<AlpacaPosition[]> {
 
 export async function getLiveOpenOrders(): Promise<AlpacaOrder[]> {
   if (!hasLiveCredentials()) return [];
-  const creds = getLiveCredentials();
-  const res = await fetch(`${ALPACA_LIVE_URL}/v2/orders?status=open&limit=100`, {
+  return getOpenOrders(false);
+}
+
+export async function getPaperOpenOrders(): Promise<AlpacaOrder[]> {
+  if (!hasPaperCredentials()) return [];
+  return getOpenOrders(true);
+}
+
+export async function getOpenOrders(paper: boolean): Promise<AlpacaOrder[]> {
+  const creds = paper ? getPaperCredentials() : getLiveCredentials();
+  if (!creds.apiKey || !creds.secretKey) return [];
+
+  const res = await fetch(`${getTradingUrl(paper)}/v2/orders?status=open&limit=100`, {
     headers: getHeaders(creds),
     cache: "no-store",
   });
   if (!res.ok) throw new Error("Failed to fetch open orders");
   return res.json();
+}
+
+/** Cancel open orders on the exit side that hold shares (e.g. stop-loss before a sell). */
+export async function cancelOpenExitOrdersForSymbol(
+  symbol: string,
+  exitSide: "buy" | "sell",
+  paper: boolean
+): Promise<number> {
+  const creds = paper ? getPaperCredentials() : getLiveCredentials();
+  if (!creds.apiKey || !creds.secretKey) return 0;
+
+  const orders = await getOpenOrders(paper);
+  const blocking = orders.filter((o) => o.symbol === symbol && o.side === exitSide);
+  let cancelled = 0;
+  for (const order of blocking) {
+    const res = await fetch(`${getTradingUrl(paper)}/v2/orders/${order.id}`, {
+      method: "DELETE",
+      headers: getHeaders(creds),
+    });
+    if (res.ok) cancelled++;
+  }
+  return cancelled;
 }
 
 /** Broker-side stop-loss sell order — live account only. */
@@ -377,25 +481,26 @@ export async function placeLiveStopLossOrder(params: {
   return res.json();
 }
 
-/** Cancel open live stop orders for a symbol before a manual/app sell. */
-export async function cancelLiveStopOrdersForSymbol(symbol: string): Promise<number> {
-  const orders = await getLiveOpenOrders();
-  const stops = orders.filter(
-    (o) =>
-      o.symbol === symbol &&
-      o.side === "sell" &&
-      (o.type === "stop" || o.type === "stop_limit")
-  );
-  const creds = getLiveCredentials();
+/** Cancel every open order on paper or live (used for legacy cleanup). */
+export async function cancelAllOpenOrders(paper: boolean): Promise<number> {
+  const creds = paper ? getPaperCredentials() : getLiveCredentials();
+  if (!creds.apiKey || !creds.secretKey) return 0;
+
+  const orders = await getOpenOrders(paper);
   let cancelled = 0;
-  for (const order of stops) {
-    const res = await fetch(`${ALPACA_LIVE_URL}/v2/orders/${order.id}`, {
+  for (const order of orders) {
+    const res = await fetch(`${getTradingUrl(paper)}/v2/orders/${order.id}`, {
       method: "DELETE",
       headers: getHeaders(creds),
     });
     if (res.ok) cancelled++;
   }
   return cancelled;
+}
+
+/** Cancel open live stop orders for a symbol before a manual/app sell. */
+export async function cancelLiveStopOrdersForSymbol(symbol: string): Promise<number> {
+  return cancelOpenExitOrdersForSymbol(symbol, "sell", false);
 }
 
 function generateMockBars(symbol: string, count: number): OHLCV[] {

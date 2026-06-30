@@ -49,6 +49,20 @@ function createInitialSlotMarketData(): Record<string, SlotMarketData> {
   );
 }
 
+export interface AutoExitMonitorStatus {
+  enabled: boolean;
+  monitoredCount: number;
+  lastCheckAt: number | null;
+  lastError: string | null;
+}
+
+export const EMPTY_AUTO_EXIT_STATUS: AutoExitMonitorStatus = {
+  enabled: false,
+  monitoredCount: 0,
+  lastCheckAt: null,
+  lastError: null,
+};
+
 export interface PositionSyncModeStatus {
   mode: "paper" | "live";
   skipped: boolean;
@@ -96,7 +110,7 @@ export interface MultiChartSlot {
 }
 
 const DEFAULT_MULTI_SLOTS: MultiChartSlot[] = [
-  { id: "multi-1", label: "Chart 1", symbol: "AAPL", timeframe: "5m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
+  { id: "multi-1", label: "Chart 1", symbol: "TSLA", timeframe: "5m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
   { id: "multi-2", label: "Chart 2", symbol: "MSFT", timeframe: "5m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
   { id: "multi-3", label: "Chart 3", symbol: "GOOGL", timeframe: "5m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
   { id: "multi-4", label: "Chart 4", symbol: "NVDA", timeframe: "5m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
@@ -121,6 +135,7 @@ interface AppState {
   multiChartSlots: MultiChartSlot[];
   slotMarketData: Record<string, SlotMarketData>;
   syncStatus: SyncStatusState;
+  autoExitStatus: AutoExitMonitorStatus;
   unrealizedPnl: { paper: ModeUnrealizedPnlSnapshot; live: ModeUnrealizedPnlSnapshot };
   tradingSchedule: TradingScheduleSettings;
   chartStyles: Record<string, ChartStyle>;
@@ -149,6 +164,7 @@ interface AppState {
   clearMultiChartMarkers: (slotId: string) => void;
   patchSlotMarketData: (slotId: string, patch: Partial<SlotMarketData>) => void;
   setSyncStatus: (status: Partial<SyncStatusState>) => void;
+  setAutoExitStatus: (status: AutoExitMonitorStatus) => void;
   setUnrealizedPnl: (snapshot: { paper: ModeUnrealizedPnlSnapshot; live: ModeUnrealizedPnlSnapshot }) => void;
   setTradingSchedule: (schedule: TradingScheduleSettings) => void;
   setChartStyle: (slotId: string, style: ChartStyle) => void;
@@ -180,6 +196,7 @@ export const useAppStore = create<AppState>((set) => {
   })),
   slotMarketData: createInitialSlotMarketData(),
   syncStatus: { ...EMPTY_SYNC_STATUS },
+  autoExitStatus: { ...EMPTY_AUTO_EXIT_STATUS },
   unrealizedPnl: { ...EMPTY_UNREALIZED_PNL },
   tradingSchedule: { ...DEFAULT_TRADING_SCHEDULE },
   chartStyles: loadChartStyles(),
@@ -304,6 +321,7 @@ export const useAppStore = create<AppState>((set) => {
     set((s) => ({
       syncStatus: { ...s.syncStatus, ...status },
     })),
+  setAutoExitStatus: (autoExitStatus) => set({ autoExitStatus }),
   setUnrealizedPnl: (unrealizedPnl) => set({ unrealizedPnl }),
   setTradingSchedule: (tradingSchedule) => set({ tradingSchedule }),
   setChartStyle: (slotId, style) =>

@@ -3,6 +3,7 @@
 import { useAppStore } from "@/lib/store";
 import { persistAutoTradeSlot } from "@/lib/auto-trade-client";
 import { MAIN_CHART_SLOT } from "@/lib/chart-slots";
+import { resetSafetyStopClient } from "@/lib/reset-safety-stop-client";
 import { ShieldAlert, Play, Pause, Hand, Bot } from "lucide-react";
 
 export function TradeControls() {
@@ -14,7 +15,6 @@ export function TradeControls() {
     riskSettings,
     setMode,
     setAutoTradeEnabled,
-    resetSafetyStop,
   } = useAppStore();
 
   return (
@@ -80,7 +80,7 @@ export function TradeControls() {
             Max consecutive losses reached. Auto trading paused.
           </p>
           <button
-            onClick={resetSafetyStop}
+            onClick={() => void resetSafetyStopClient("all")}
             className="mt-2 w-full rounded bg-[var(--danger)]/20 py-1.5 text-xs text-[var(--danger)] hover:bg-[var(--danger)]/30"
           >
             Reset Safety Stop

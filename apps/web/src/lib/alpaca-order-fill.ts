@@ -13,6 +13,18 @@ export function isFilledOrderStatus(status: string): boolean {
   return status === "filled" || status === "partially_filled";
 }
 
+export function isPendingOrderStatus(status: string): boolean {
+  return [
+    "new",
+    "accepted",
+    "pending_new",
+    "pending_replace",
+    "pending_cancel",
+    "accepted_for_bidding",
+    "calculated",
+  ].includes(status);
+}
+
 export function parseAlpacaOrderFill(order: {
   id?: string;
   status?: string;

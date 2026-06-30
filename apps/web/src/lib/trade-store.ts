@@ -5,6 +5,12 @@ import type { Trade, TradeMode } from "@wicksense/core";
 import { isAccountSyncTrade } from "@wicksense/core";
 import { prisma } from "@/lib/db";
 import { ensureDefaultUserId } from "@/lib/default-user";
+import {
+  deleteAutoExitMeta,
+  deleteAutoExitMetaForTrades,
+  mergeTradeWithAutoExitMeta,
+  persistTradeAutoExitFields,
+} from "@/lib/auto-exit-meta";
 
 const LEGACY_TRADES_PATH = path.join(process.cwd(), "trades.local.json");
 const LEGACY_BACKUP_PATH = path.join(process.cwd(), "trades.local.json.bak");
@@ -112,7 +118,7 @@ export async function getAllTrades(): Promise<Trade[]> {
     where: { userId, archived: false },
     orderBy: { entryTime: "desc" },
   });
-  return rows.map(rowToTrade);
+  return rows.map((row) => mergeTradeWithAutoExitMeta(rowToTrade(row)));
 }
 
 export async function getArchivedTrades(): Promise<Trade[]> {
@@ -121,7 +127,7 @@ export async function getArchivedTrades(): Promise<Trade[]> {
     where: { userId, archived: true },
     orderBy: { entryTime: "desc" },
   });
-  return rows.map(rowToTrade);
+  return rows.map((row) => mergeTradeWithAutoExitMeta(rowToTrade(row)));
 }
 
 export async function archiveTrades(params: {
@@ -181,7 +187,13 @@ export async function getOpenTrades(mode?: TradeMode): Promise<Trade[]> {
     },
     orderBy: { entryTime: "desc" },
   });
-  return rows.map(rowToTrade);
+  return rows.map((row) => mergeTradeWithAutoExitMeta(rowToTrade(row)));
+}
+
+export async function getTradeById(id: string): Promise<Trade | undefined> {
+  await ensureTradeStoreReady();
+  const row = await prisma.trade.findUnique({ where: { id } });
+  return row ? mergeTradeWithAutoExitMeta(rowToTrade(row)) : undefined;
 }
 
 export async function findOpenTrade(
@@ -199,6 +211,23 @@ export async function findOpenTrade(
   return open[0];
 }
 
+/** Active (non-archived) trade already opened from this chart slot + signal id. */
+export async function findTradeBySignalId(
+  chartSlot: string,
+  signalId: string
+): Promise<Trade | undefined> {
+  const userId = await ensureTradeStoreReady();
+  const row = await prisma.trade.findFirst({
+    where: {
+      userId,
+      chartSlot,
+      signalId,
+      archived: false,
+    },
+  });
+  return row ? mergeTradeWithAutoExitMeta(rowToTrade(row)) : undefined;
+}
+
 export async function hasOpenAlpacaPosition(
   symbol: string,
   mode: "paper" | "live",
@@ -211,6 +240,7 @@ export async function deleteTrade(id: string): Promise<boolean> {
   await ensureTradeStoreReady();
   try {
     await prisma.trade.delete({ where: { id } });
+    deleteAutoExitMeta(id);
     return true;
   } catch {
     return false;
@@ -287,11 +317,14 @@ export async function upsertTrade(trade: Trade): Promise<Trade> {
     create: tradeToRow(trade, userId),
     update: tradeToRow(trade, userId),
   });
-  return rowToTrade(row);
+  persistTradeAutoExitFields(trade);
+  return mergeTradeWithAutoExitMeta(rowToTrade(row));
 }
 
 export async function deleteTradesByMode(mode: TradeMode): Promise<number> {
   const userId = await ensureTradeStoreReady();
+  const rows = await prisma.trade.findMany({ where: { userId, mode, archived: false } });
+  deleteAutoExitMetaForTrades(rows.map((row) => row.id));
   const result = await prisma.trade.deleteMany({ where: { userId, mode, archived: false } });
   return result.count;
 }

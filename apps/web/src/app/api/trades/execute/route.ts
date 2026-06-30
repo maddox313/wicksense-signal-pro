@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { computePerformanceStats, isAppStrategyTrade } from "@wicksense/core";
+import { computePerformanceStats, computeTakeProfitPrice, isAppStrategyTrade } from "@wicksense/core";
 import type { RiskSettings, AlertSettings, Trade, TradeMode } from "@wicksense/core";
 import {
   placeOrderWithFill,
   resolveAccountEquity,
   placeLiveStopLossOrder,
-  cancelLiveStopOrdersForSymbol,
+  cancelOpenExitOrdersForSymbol,
+  CLOSE_ORDER_FILL_OPTIONS,
+  ENTRY_ORDER_FILL_OPTIONS,
+  getPaperOpenOrders,
+  getLiveOpenOrders,
 } from "@/lib/alpaca";
 import { sendAlert, type TradeAlertDetails } from "@/lib/alerts";
 import { logDuplicateSignalBlocked } from "@/lib/signal-dedupe-log";
@@ -24,24 +28,20 @@ import {
   getAllTrades,
   getOpenTrades,
   findOpenTrade,
+  findTradeBySignalId,
   upsertTrade,
   deleteSyncImportsForPosition,
 } from "@/lib/trade-store";
 import { syncAlpacaPositions } from "@/lib/position-sync";
 import { loadTradingScheduleSettings } from "@/lib/trading-schedule-config";
 import { evaluateTradingSchedule } from "@wicksense/core";
-
-const executedSignalIds = new Set<string>();
+import { isLegacyPaperBlockSymbol } from "@/lib/legacy-paper-cleanup";
 
 function getEngine(chartSlot: string, settings: RiskSettings) {
   return getRiskEngine(chartSlot, settings);
 }
 
-function signalKey(chartSlot: string, signalId: string) {
-  return `${chartSlot}:${signalId}`;
-}
-
-function blockIfDuplicateSignal(params: {
+async function blockIfDuplicateSignal(params: {
   chartSlot: string;
   signalId?: string;
   symbol: string;
@@ -49,9 +49,10 @@ function blockIfDuplicateSignal(params: {
   strategy: string;
   side: string;
   signalBarTime?: number;
-}): boolean {
+}): Promise<boolean> {
   if (!params.signalId) return false;
-  if (!executedSignalIds.has(signalKey(params.chartSlot, params.signalId))) return false;
+  const existing = await findTradeBySignalId(params.chartSlot, params.signalId);
+  if (!existing) return false;
 
   logDuplicateSignalBlocked({
     slot: params.chartSlot,
@@ -67,6 +68,20 @@ function blockIfDuplicateSignal(params: {
 
 function isAlpacaMode(mode: TradeMode): mode is "paper" | "live" {
   return mode === "paper" || mode === "live";
+}
+
+async function hasPendingBuyOrder(symbol: string, paper: boolean): Promise<boolean> {
+  const orders = paper ? await getPaperOpenOrders() : await getLiveOpenOrders();
+  return orders.some((order) => order.symbol === symbol && order.side === "buy");
+}
+
+function isRetryableFillFailure(message: string): boolean {
+  return /market may be closed|still (accepted|new|pending)|not filled after/i.test(message);
+}
+
+function scheduleAllowsExtendedHours(): boolean {
+  const schedule = loadTradingScheduleSettings();
+  return Boolean(schedule.unrestricted || schedule.allowAfterHours || schedule.allowOvernight);
 }
 
 async function reconcileMode(mode: TradeMode) {
@@ -129,7 +144,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ skipped: true, reason: "No open position to sell" });
     }
     if (
-      blockIfDuplicateSignal({
+      await blockIfDuplicateSignal({
         chartSlot,
         signalId,
         symbol,
@@ -147,12 +162,14 @@ export async function POST(req: NextRequest) {
 
     if (mode === "live") {
       try {
-        await cancelLiveStopOrdersForSymbol(symbol);
+        await cancelOpenExitOrdersForSymbol(symbol, "sell", false);
         const fill = await placeOrderWithFill({
           symbol,
           qty: openBuy.quantity,
           side: "sell",
           paper: false,
+          extended_hours: true,
+          fillOptions: CLOSE_ORDER_FILL_OPTIONS,
         });
         exitPrice = fill.filledAvgPrice;
         closedQty = fill.filledQty;
@@ -161,11 +178,14 @@ export async function POST(req: NextRequest) {
       }
     } else if (mode === "paper") {
       try {
+        await cancelOpenExitOrdersForSymbol(symbol, "sell", true);
         const fill = await placeOrderWithFill({
           symbol,
           qty: openBuy.quantity,
           side: "sell",
           paper: true,
+          extended_hours: true,
+          fillOptions: CLOSE_ORDER_FILL_OPTIONS,
         });
         exitPrice = fill.filledAvgPrice;
         closedQty = fill.filledQty;
@@ -187,7 +207,6 @@ export async function POST(req: NextRequest) {
     };
     await upsertTrade(closed);
     engine.recordTradeResult(pnl);
-    if (signalId) executedSignalIds.add(signalKey(chartSlot, signalId));
 
     await sendAlert(
       "default",
@@ -218,7 +237,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (
-    blockIfDuplicateSignal({
+    await blockIfDuplicateSignal({
       chartSlot,
       signalId,
       symbol,
@@ -253,6 +272,20 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  if (mode === "paper" && isLegacyPaperBlockSymbol(symbol)) {
+    return NextResponse.json({
+      skipped: true,
+      reason: `Legacy paper position still open at Alpaca for ${symbol} — close at broker first`,
+    });
+  }
+
+  if (isAlpacaMode(mode) && (await hasPendingBuyOrder(symbol, mode === "paper"))) {
+    return NextResponse.json({
+      skipped: true,
+      reason: `Buy order already pending for ${symbol} at Alpaca`,
+    });
+  }
+
   const openTrades = await getOpenTrades();
   const slotOpenCount = openTrades.filter((t) => t.chartSlot === chartSlot).length;
   const check = engine.canOpenTrade(slotOpenCount);
@@ -282,6 +315,7 @@ export async function POST(req: NextRequest) {
   let alpacaStopOrderId: string | undefined;
   let entryPrice = price;
   let filledQty = quantity;
+  const allowExtendedHours = scheduleAllowsExtendedHours();
 
   if (mode === "live") {
     try {
@@ -290,6 +324,8 @@ export async function POST(req: NextRequest) {
         qty: quantity,
         side: "buy",
         paper: false,
+        extended_hours: allowExtendedHours,
+        fillOptions: ENTRY_ORDER_FILL_OPTIONS,
       });
       alpacaOrderId = fill.orderId;
       entryPrice = fill.filledAvgPrice;
@@ -317,7 +353,14 @@ export async function POST(req: NextRequest) {
         }
       }
     } catch (err) {
-      return NextResponse.json({ error: String(err) }, { status: 500 });
+      const message = err instanceof Error ? err.message : String(err);
+      if (isRetryableFillFailure(message)) {
+        return NextResponse.json({
+          skipped: true,
+          reason: `Order not filled — ${message}`,
+        });
+      }
+      return NextResponse.json({ error: message }, { status: 500 });
     }
   } else if (mode === "paper") {
     try {
@@ -326,16 +369,32 @@ export async function POST(req: NextRequest) {
         qty: quantity,
         side: "buy",
         paper: true,
+        extended_hours: allowExtendedHours,
+        fillOptions: ENTRY_ORDER_FILL_OPTIONS,
       });
       alpacaOrderId = fill.orderId;
       entryPrice = fill.filledAvgPrice;
       filledQty = fill.filledQty;
     } catch (err) {
-      return NextResponse.json({ error: String(err) }, { status: 500 });
+      const message = err instanceof Error ? err.message : String(err);
+      if (isRetryableFillFailure(message)) {
+        return NextResponse.json({
+          skipped: true,
+          reason: `Order not filled — ${message}`,
+        });
+      }
+      return NextResponse.json({ error: message }, { status: 500 });
     }
   }
 
   await deleteSyncImportsForPosition(symbol, "buy", mode);
+
+  const takeProfit = computeTakeProfitPrice(
+    entryPrice,
+    "buy",
+    liveSettings.takeProfitPercent
+  );
+  stopLoss = computeStopLossPrice(entryPrice, liveSettings.stopLossPercent);
 
   const trade: Trade = {
     id: signalId
@@ -352,7 +411,8 @@ export async function POST(req: NextRequest) {
     chartSlot,
     timeframe,
     signalId,
-    stopLossPrice: mode === "live" && liveSettings.brokerStopLossEnabled ? stopLoss : undefined,
+    stopLossPrice: isAlpacaMode(mode) ? stopLoss : undefined,
+    takeProfitPrice: isAlpacaMode(mode) ? takeProfit : undefined,
     alpacaOrderId,
     alpacaStopOrderId,
   };
@@ -372,8 +432,6 @@ export async function POST(req: NextRequest) {
     dbError = err instanceof Error ? err.message : String(err);
     console.error("[execute] Trade save failed after broker fill:", dbError);
   }
-
-  if (signalId) executedSignalIds.add(signalKey(chartSlot, signalId));
 
   const stopNote =
     mode === "live" && liveSettings.brokerStopLossEnabled

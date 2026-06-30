@@ -47,11 +47,14 @@ export interface Trade {
   pnlPercent?: number;
   mode: TradeMode;
   strategy: string;
-  status: "open" | "closed" | "cancelled";
+  status: "open" | "closed" | "cancelled" | "needs_manual_close";
   chartSlot?: string;
   timeframe?: string;
   signalId?: string;
   stopLossPrice?: number;
+  takeProfitPrice?: number;
+  closeReason?: "TAKE_PROFIT" | "STOP_LOSS";
+  outcome?: "win" | "loss";
   alpacaOrderId?: string;
   alpacaStopOrderId?: string;
   archived?: boolean;
@@ -63,6 +66,8 @@ export interface LiveTradingSettings {
   brokerStopLossEnabled: boolean;
   /** Percent below entry for stop price (e.g. 2 = 2%) */
   stopLossPercent: number;
+  /** Percent above entry for take-profit (e.g. 4 = 4%) */
+  takeProfitPercent: number;
 }
 
 export interface RiskSettings {
@@ -168,6 +173,7 @@ export const DEFAULT_ALERT_SETTINGS: AlertSettings = {
 export const DEFAULT_LIVE_TRADING_SETTINGS: LiveTradingSettings = {
   brokerStopLossEnabled: true,
   stopLossPercent: 2,
+  takeProfitPercent: 4,
 };
 
 export type WeekdayKey = "sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat";

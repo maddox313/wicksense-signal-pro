@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { TradingScheduleSettings, WeekdayKey } from "@wicksense/core";
 import { DEFAULT_TRADING_SCHEDULE, evaluateTradingSchedule } from "@wicksense/core";
-import { saveTradingSchedule } from "@/lib/trading-schedule-client";
+import { useAppStore } from "@/lib/store";
 import { Clock, Save } from "lucide-react";
 
 const WEEKDAYS: { key: WeekdayKey; label: string }[] = [
@@ -26,13 +26,18 @@ export function TradingScheduleSection() {
   const [statusNow, setStatusNow] = useState<string>("");
 
   useEffect(() => {
-    fetch("/api/settings/trading-schedule")
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12_000);
+    fetch("/api/settings/trading-schedule", { signal: controller.signal })
       .then((r) => r.json())
       .then((data) => {
         if (data.settings) setSchedule(data.settings);
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => {
+        clearTimeout(timeout);
+        setLoading(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -61,9 +66,30 @@ export function TradingScheduleSection() {
   const save = async () => {
     setSaving(true);
     setMessage(null);
-    const result = await saveTradingSchedule(schedule);
-    setSaving(false);
-    setMessage(result.ok ? "Trading schedule saved." : result.error ?? "Failed to save");
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      const res = await fetch("/api/settings/trading-schedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(schedule),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      const data = await res.json();
+      if (!res.ok) {
+        setMessage(data.error ?? "Failed to save — server may be busy, try again");
+        return;
+      }
+      if (data.settings) {
+        useAppStore.getState().setTradingSchedule(data.settings);
+      }
+      setMessage("Trading schedule saved.");
+    } catch {
+      setMessage("Save timed out — server busy. Stop extra dev servers and retry.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -97,6 +123,11 @@ export function TradingScheduleSection() {
         />
         <span className="font-medium">Unrestricted (24/7 trading)</span>
       </label>
+      {schedule.unrestricted && (
+        <p className="mb-4 text-xs text-amber-400">
+          Unrestricted is on — day/time fields below are ignored. Uncheck to set hours.
+        </p>
+      )}
 
       <div className={`space-y-5 ${disabled ? "pointer-events-none opacity-40" : ""}`}>
         <div>

@@ -6,7 +6,7 @@ import type { Trade } from "@wicksense/core";
 import { computePerformanceStats, TRADING_CALENDAR_TIMEZONE } from "@wicksense/core";
 import { TradeHistoryTable } from "@/components/TradeHistoryTable";
 import { formatTradeDate } from "@/lib/trade-format";
-import { ArrowLeft, CalendarDays } from "lucide-react";
+import { ArrowLeft, CalendarDays, Loader2, XCircle } from "lucide-react";
 
 function todayDayKey(): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -25,6 +25,13 @@ export default function TradeArchivePage() {
   const [loadingTrades, setLoadingTrades] = useState(false);
   const [totalArchived, setTotalArchived] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [closingAll, setClosingAll] = useState(false);
+  const [closeMessage, setCloseMessage] = useState<string | null>(null);
+
+  const needsManualCloseCount = useMemo(
+    () => trades.filter((t) => t.status === "needs_manual_close").length,
+    [trades]
+  );
 
   const loadDates = useCallback(async () => {
     setLoadingDates(true);
@@ -87,6 +94,46 @@ export default function TradeArchivePage() {
     return formatTradeDate(new Date(y, m - 1, d).getTime());
   }, [selectedDate]);
 
+  const closeAllArchived = async () => {
+    if (
+      !confirm(
+        "Close all archived legacy paper trades? This will liquidate at Alpaca when the market is open, or mark them closed at the current market price when it is closed."
+      )
+    ) {
+      return;
+    }
+    setClosingAll(true);
+    setCloseMessage(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/trades/archive/close-all", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        setCloseMessage(data.error ?? "Failed to close archived trades");
+        return;
+      }
+      const closed = data.result?.dbClosed?.length ?? 0;
+      const broker = data.result?.brokerClosed?.length ?? 0;
+      const marked = data.result?.dbMarkedToMarket?.length ?? 0;
+      const remaining = data.result?.remainingPositions?.length ?? 0;
+      setCloseMessage(
+        `Closed ${closed} archive record(s)` +
+          (broker > 0 ? ` · ${broker} liquidated at Alpaca` : "") +
+          (marked > 0 ? ` · ${marked} marked to market (broker still open — retry when market opens)` : "") +
+          (remaining > 0 ? ` · ${remaining} Alpaca position(s) remain` : "")
+      );
+      const list = await loadDates();
+      if (list.length > 0) {
+        setSelectedDate((current) => (list.includes(current) ? current : list[0]));
+      }
+      if (selectedDate) await loadTradesForDate(selectedDate);
+    } catch {
+      setCloseMessage("Could not close archived trades.");
+    } finally {
+      setClosingAll(false);
+    }
+  };
+
   return (
     <div>
       <header className="mb-6 flex flex-wrap items-start justify-between gap-3">
@@ -146,14 +193,42 @@ export default function TradeArchivePage() {
       </div>
 
       {error && <p className="mb-4 text-sm text-[var(--danger)]">{error}</p>}
+      {closeMessage && (
+        <p
+          className={`mb-4 text-sm ${
+            closeMessage.includes("Failed") || closeMessage.includes("Could not")
+              ? "text-[var(--danger)]"
+              : "text-[var(--accent)]"
+          }`}
+        >
+          {closeMessage}
+        </p>
+      )}
 
       <div className="rounded-xl border border-[var(--card-border)] bg-[var(--card)]">
         <div className="border-b border-[var(--card-border)] p-4">
-          <h2 className="text-sm font-medium">
-            {loadingTrades || loadingDates
-              ? "Loading…"
-              : `${selectedLabel} — ${trades.length} trade${trades.length === 1 ? "" : "s"}`}
-          </h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-sm font-medium">
+              {loadingTrades || loadingDates
+                ? "Loading…"
+                : `${selectedLabel} — ${trades.length} trade${trades.length === 1 ? "" : "s"}`}
+            </h2>
+            {needsManualCloseCount > 0 && (
+              <button
+                type="button"
+                onClick={() => void closeAllArchived()}
+                disabled={closingAll}
+                className="flex items-center gap-1.5 rounded-lg border border-[var(--danger)]/40 bg-[var(--danger)]/10 px-3 py-1.5 text-xs font-medium text-[var(--danger)] hover:bg-[var(--danger)]/20 disabled:opacity-40"
+              >
+                {closingAll ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <XCircle className="h-3.5 w-3.5" />
+                )}
+                {closingAll ? "Closing…" : `Close All Legacy (${needsManualCloseCount})`}
+              </button>
+            )}
+          </div>
           {trades.length > 0 && (
             <p className="mt-1 text-xs text-[var(--muted)]">
               Day P&L:{" "}

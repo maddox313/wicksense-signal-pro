@@ -35,7 +35,8 @@ export function formatUnrealizedPlpc(plpc: number): string {
   return `${(plpc * 100).toFixed(2)}%`;
 }
 
-export const UNREALIZED_PNL_TOOLTIP = "Unrealized P&L from Alpaca open position";
+export const UNREALIZED_PNL_TOOLTIP =
+  "Unrealized P&L from Alpaca for WickSense open trades only (excludes orphaned broker positions)";
 
 /** Match open trade rows to Alpaca positions by symbol (and side when available). */
 export function lookupUnrealizedForOpenTrade(

@@ -21,6 +21,7 @@ import {
   isEngineCurrentlyRunning,
   loadEngineTelemetry,
   mergeStrategyTelemetry,
+  type EngineTelemetryState,
 } from "@/lib/strategy-engine-telemetry";
 import { ArrowRight, ListTree, RefreshCw, Activity } from "lucide-react";
 
@@ -58,6 +59,9 @@ export default function StrategyPerformancePage() {
   const [modeFilter, setModeFilter] = useState<ModeFilter>("all");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [activityVersion, setActivityVersion] = useState(0);
+  const [serverTelemetry, setServerTelemetry] = useState<EngineTelemetryState | null>(null);
+  const [workerEnabled, setWorkerEnabled] = useState<boolean | null>(null);
+  const [serverEngineRunning, setServerEngineRunning] = useState(false);
 
   const activePreset =
     presets.find((preset) => preset.id === activePresetId) ?? presets[0];
@@ -66,6 +70,28 @@ export default function StrategyPerformancePage() {
   useEffect(() => {
     bootstrapGeneratedFromSignals(signals);
   }, [signals]);
+
+  useEffect(() => {
+    const loadServerTelemetry = async () => {
+      try {
+        const res = await fetch("/api/trades/engine-telemetry");
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          telemetry?: EngineTelemetryState;
+          workerEnabled?: boolean;
+          engineRunning?: boolean;
+        };
+        if (data.telemetry) setServerTelemetry(data.telemetry);
+        if (typeof data.workerEnabled === "boolean") setWorkerEnabled(data.workerEnabled);
+        if (typeof data.engineRunning === "boolean") setServerEngineRunning(data.engineRunning);
+      } catch {
+        /* non-blocking */
+      }
+    };
+    void loadServerTelemetry();
+    const interval = setInterval(() => void loadServerTelemetry(), 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const bump = () => setActivityVersion((value) => value + 1);
@@ -103,10 +129,23 @@ export default function StrategyPerformancePage() {
     [activityVersion, lastUpdated]
   );
 
-  const engineTelemetry = useMemo(
-    () => loadEngineTelemetry(),
-    [activityVersion, lastUpdated]
-  );
+  const engineTelemetry = useMemo(() => {
+    const client = loadEngineTelemetry();
+    if (!serverTelemetry) return client;
+    return {
+      ...client,
+      ...serverTelemetry,
+      totalCycles: Math.max(client.totalCycles, serverTelemetry.totalCycles),
+      lastCycleCompletedAt:
+        Math.max(client.lastCycleCompletedAt ?? 0, serverTelemetry.lastCycleCompletedAt ?? 0) ||
+        null,
+      lastSlotScans:
+        serverTelemetry.lastSlotScans.length > 0
+          ? serverTelemetry.lastSlotScans
+          : client.lastSlotScans,
+      perStrategy: { ...client.perStrategy, ...serverTelemetry.perStrategy },
+    };
+  }, [activityVersion, lastUpdated, serverTelemetry]);
 
   const telemetryOverlay = useMemo(
     () =>
@@ -166,7 +205,7 @@ export default function StrategyPerformancePage() {
       row.totalGeneratedSinceStartup > 0
   );
 
-  const engineRunning = isEngineCurrentlyRunning();
+  const engineRunning = serverEngineRunning || isEngineCurrentlyRunning();
   const activityRecordCount = activities.length;
 
   return (
@@ -254,10 +293,18 @@ export default function StrategyPerformancePage() {
             market bars, or preset may not include firing strategies.
           </p>
         )}
-        {engineTelemetry.totalCycles === 0 && (
+        {engineTelemetry.totalCycles === 0 && workerEnabled === false && (
           <p className="mt-3 text-xs text-amber-400">
-            No engine cycles recorded this session. Keep the app open; AutoTradeEngine polls every
-            30s.
+            Server trade engine is disabled. Set{" "}
+            <code className="text-[10px]">TRADE_ENGINE_ENABLED=true</code> in{" "}
+            <code className="text-[10px]">apps/web/.env</code> and restart the dev server.
+          </p>
+        )}
+        {engineTelemetry.totalCycles === 0 && workerEnabled !== false && (
+          <p className="mt-3 text-xs text-amber-400">
+            No engine cycles yet — the server polls every 30s. If this persists after a minute,
+            check the dev server console for <code className="text-[10px]">[trade-engine]</code>{" "}
+            logs.
           </p>
         )}
       </div>

@@ -36,13 +36,16 @@ export function buildUnrealizedSnapshotFromPositions(
   openTradeSymbols: string[] = []
 ): ModeUnrealizedPnlSnapshot {
   const byPositionKey: Record<string, AlpacaUnrealizedPosition> = {};
+  const openSymbolSet = new Set(openTradeSymbols);
   let totalUnrealizedPl = 0;
 
   for (const pos of positions) {
     const parsed = parseAlpacaPosition(pos);
     if (!parsed) continue;
     byPositionKey[positionKey(parsed.symbol, parsed.side)] = parsed;
-    totalUnrealizedPl += parsed.unrealizedPl;
+    if (openSymbolSet.has(parsed.symbol)) {
+      totalUnrealizedPl += parsed.unrealizedPl;
+    }
   }
 
   const positionCount = Object.keys(byPositionKey).length;

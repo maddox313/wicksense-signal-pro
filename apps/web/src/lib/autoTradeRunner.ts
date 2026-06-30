@@ -1,17 +1,8 @@
-import type { OHLCV, TradeMode, TradingStyle } from "@wicksense/core";
-import {
-  detectCurrentBarSignals,
-  detectRecentSignal,
-  evaluateTradingSchedule,
-} from "@wicksense/core";
+import type { OHLCV, Trade, TradeMode, TradingStyle } from "@wicksense/core";
 import { MAIN_CHART_SLOT } from "./chart-slots";
 import { addSignalChartMarker } from "./chart-marker-utils";
 import { useAppStore } from "./store";
-import {
-  bootstrapGeneratedFromSignals,
-  recordSignalActivity,
-  recordSignalActivities,
-} from "./signal-activity-store";
+import { recordSignalActivity, recordSignalActivities } from "./signal-activity-store";
 import {
   recordDetectError,
   clearDetectError,
@@ -20,7 +11,7 @@ import {
   recordStrategyRejected,
 } from "./strategy-engine-telemetry";
 import { resolveActivePreset } from "./presets-client";
-import { logDuplicateSignalBlocked } from "./signal-dedupe-log";
+import { runSlotCycleWithContext, type SlotCycleContext } from "./slot-cycle-core";
 
 export const AUTO_TRADE_POLL_MS = 30_000;
 
@@ -272,262 +263,44 @@ export async function refreshSlotBarsOnly(
   }
 }
 
-export async function runSlotCycle(
-  config: SlotTradeConfig,
-  lastSignalBySlot: Map<string, string>,
-  symbolTfBySlot: Map<string, string>
-): Promise<void> {
-  const store = useAppStore.getState();
-  const { slotId, symbol, timeframe, tradingStyle, mode, autoTradeEnabled, safetyStopActive } =
-    config;
-
-  const symbolTfKey = `${symbol}:${timeframe}`;
-  if (symbolTfBySlot.get(slotId) !== symbolTfKey) {
-    symbolTfBySlot.set(slotId, symbolTfKey);
-    lastSignalBySlot.delete(slotId);
-  }
-
-  const { bars } = await refreshSlotBarsOnly(slotId, symbol, timeframe);
-
-  if (bars.length < 30) {
-    recordSlotScan({
-      chartSlot: slotId,
-      symbol,
-      timeframe,
-      barCount: bars.length,
-      presetId: null,
-      presetStrategies: [],
-      barSignalCount: 0,
-      strategiesFired: [],
-      pickedStrategy: null,
-      outcome: "no_bars",
-      detail: `Only ${bars.length} bars (need 30+)`,
-    });
-    return;
-  }
-
-  const activePreset = resolveActivePreset();
-  if (!activePreset) {
-    recordSlotScan({
-      chartSlot: slotId,
-      symbol,
-      timeframe,
-      barCount: bars.length,
-      presetId: null,
-      presetStrategies: [],
-      barSignalCount: 0,
-      strategiesFired: [],
-      pickedStrategy: null,
-      outcome: "no_preset",
-      detail: "No strategy preset loaded",
-    });
-    return;
-  }
-
+function createClientSlotCycleContext(slotId: string, mode: TradeMode): SlotCycleContext {
   const activityOpts = { chartSlot: slotId, mode };
-
-  try {
-    const tf = timeframe || "5m";
-    const signal = detectRecentSignal(
-      symbol,
-      bars,
-      activePreset.strategies,
-      tradingStyle,
-      undefined,
-      tf
-    );
-    const barSignals = detectCurrentBarSignals(
-      symbol,
-      bars,
-      activePreset.strategies,
-      tradingStyle,
-      tf
-    );
-    const data = { signal, barSignals };
-    const strategiesFired = [...new Set<string>(barSignals.map((s) => s.strategy))];
-    clearDetectError();
-
-    if (barSignals.length > 0) {
-      recordSignalActivities(barSignals, "generated", activityOpts);
-    }
-
-    if (!signal) {
-      recordSlotScan({
-        chartSlot: slotId,
-        symbol,
-        timeframe,
-        barCount: bars.length,
-        presetId: activePreset.id,
-        presetStrategies: activePreset.strategies,
-        barSignalCount: barSignals.length,
-        strategiesFired,
-        pickedStrategy: null,
-        outcome: strategiesFired.length > 0 ? "signal_seen" : "no_signal",
-        detail: strategiesFired.length > 0 ? "Bar signals only" : "No strategy match",
-      });
-      return;
-    }
-
-    recordSignalActivity(signal, "generated", activityOpts);
-    store.addSignal(signal);
-    addSignalChartMarker(slotId, signal);
-
-    const rejectSignal = (reason: string) => {
+  return {
+    getTrades: () => useAppStore.getState().trades,
+    tradingSchedule: useAppStore.getState().tradingSchedule,
+    riskSettings: useAppStore.getState().riskSettings,
+    alertSettings: useAppStore.getState().alertSettings,
+    resolveActivePreset,
+    fetchBars: async (symbol, timeframe) => {
+      const result = await refreshSlotBarsOnly(slotId, symbol, timeframe);
+      return result;
+    },
+    executeTrade: executeSlotTrade,
+    onSignalDetected: (signal) => {
+      const store = useAppStore.getState();
+      store.addSignal(signal);
+      addSignalChartMarker(slotId, signal);
+    },
+    recordBarSignalsGenerated: (signals) =>
+      recordSignalActivities(signals, "generated", activityOpts),
+    recordSlotScan: (scan) => recordSlotScan(scan as Parameters<typeof recordSlotScan>[0]),
+    recordSignalGenerated: (signal) => recordSignalActivity(signal, "generated", activityOpts),
+    recordSignalRejected: (signal, reason) => {
       recordSignalActivity(signal, "rejected", { ...activityOpts, reason });
       recordStrategyRejected(signal.strategy);
-    };
-
-    if (!autoTradeEnabled) {
-      rejectSignal("Auto trade disabled");
-      recordSlotScan({
-        chartSlot: slotId,
-        symbol,
-        timeframe,
-        barCount: bars.length,
-        presetId: activePreset.id,
-        presetStrategies: activePreset.strategies,
-        barSignalCount: barSignals.length,
-        strategiesFired,
-        pickedStrategy: signal.strategy,
-        outcome: "signal_seen",
-        detail: "Auto trade disabled",
-      });
-      return;
-    }
-    if (safetyStopActive) {
-      rejectSignal("Safety stop active");
-      recordSlotScan({
-        chartSlot: slotId,
-        symbol,
-        timeframe,
-        barCount: bars.length,
-        presetId: activePreset.id,
-        presetStrategies: activePreset.strategies,
-        barSignalCount: barSignals.length,
-        strategiesFired,
-        pickedStrategy: signal.strategy,
-        outcome: "signal_seen",
-        detail: "Safety stop active",
-      });
-      return;
-    }
-    if (mode === "manual") {
-      rejectSignal("Manual mode");
-      recordSlotScan({
-        chartSlot: slotId,
-        symbol,
-        timeframe,
-        barCount: bars.length,
-        presetId: activePreset.id,
-        presetStrategies: activePreset.strategies,
-        barSignalCount: barSignals.length,
-        strategiesFired,
-        pickedStrategy: signal.strategy,
-        outcome: "signal_seen",
-        detail: "Manual mode",
-      });
-      return;
-    }
-
-    if (lastSignalBySlot.get(slotId) === signal.id) {
-      logDuplicateSignalBlocked({
-        slot: slotId,
-        symbol,
-        timeframe,
-        strategy: signal.strategy,
-        side: signal.side,
-        barTime: signal.time,
-        signalId: signal.id,
-      });
-      recordSlotScan({
-        chartSlot: slotId,
-        symbol,
-        timeframe,
-        barCount: bars.length,
-        presetId: activePreset.id,
-        presetStrategies: activePreset.strategies,
-        barSignalCount: barSignals.length,
-        strategiesFired,
-        pickedStrategy: signal.strategy,
-        outcome: "signal_seen",
-        detail: "Duplicate signal (already processed)",
-      });
-      return;
-    }
-
-    const scheduleCheck = evaluateTradingSchedule(store.tradingSchedule);
-    if (!scheduleCheck.allowed) {
-      rejectSignal(scheduleCheck.reason ?? "Outside trading schedule");
-      recordSlotScan({
-        chartSlot: slotId,
-        symbol,
-        timeframe,
-        barCount: bars.length,
-        presetId: activePreset.id,
-        presetStrategies: activePreset.strategies,
-        barSignalCount: barSignals.length,
-        strategiesFired,
-        pickedStrategy: signal.strategy,
-        outcome: "signal_seen",
-        detail: scheduleCheck.reason ?? "Outside trading schedule",
-      });
-      return;
-    }
-
-    lastSignalBySlot.set(slotId, signal.id);
-    const result = await executeSlotTrade({
-      slotId,
-      symbol,
-      side: signal.side,
-      price: signal.price,
-      strategy: signal.strategy,
-      mode,
-      signalId: signal.id,
-      bars,
-      timeframe,
-      signalReason: signal.reason,
-      signalBarTime: signal.time,
-    });
-
-    if (result.skipped || (!result.ok && result.reason)) {
-      rejectSignal(result.reason ?? "Trade skipped by filter");
-      recordSlotScan({
-        chartSlot: slotId,
-        symbol,
-        timeframe,
-        barCount: bars.length,
-        presetId: activePreset.id,
-        presetStrategies: activePreset.strategies,
-        barSignalCount: barSignals.length,
-        strategiesFired,
-        pickedStrategy: signal.strategy,
-        outcome: "signal_seen",
-        detail: result.reason ?? "Trade skipped by filter",
-      });
-      return;
-    }
-
-    if (result.ok) {
+    },
+    recordSignalConverted: (signal) => {
       recordSignalActivity(signal, "converted", activityOpts);
       recordStrategyConverted(signal.strategy);
-      recordSlotScan({
-        chartSlot: slotId,
-        symbol,
-        timeframe,
-        barCount: bars.length,
-        presetId: activePreset.id,
-        presetStrategies: activePreset.strategies,
-        barSignalCount: barSignals.length,
-        strategiesFired,
-        pickedStrategy: signal.strategy,
-        outcome: "signal_traded",
-      });
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Signal analysis failed";
-    recordDetectError(message);
-    console.error(`[AutoTrade:${slotId}] Signal analysis failed`, err);
-  }
+    },
+    recordDetectError,
+    clearDetectError,
+  };
+}
+
+export async function runSlotCycle(config: SlotTradeConfig): Promise<void> {
+  const { slotId, mode } = config;
+  await runSlotCycleWithContext(config, createClientSlotCycleContext(slotId, mode));
 }
 
 export function buildMainSlotConfig(): SlotTradeConfig {

@@ -13,5 +13,11 @@ export function getRiskEngine(chartSlot: string, settings: RiskSettings): RiskEn
 }
 
 export function resetAllRiskEngines(): void {
-  riskEngines.clear();
+  for (const engine of riskEngines.values()) {
+    engine.resetSafetyStop();
+  }
+}
+
+export function resetRiskEngine(chartSlot: string): void {
+  riskEngines.get(chartSlot)?.resetSafetyStop();
 }

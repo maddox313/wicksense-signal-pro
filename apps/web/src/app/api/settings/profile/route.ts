@@ -4,6 +4,7 @@ import {
   saveUserProfile,
   maskEmail,
   maskPhone,
+  type UserProfile,
 } from "@/lib/user-config";
 import { getAlertProviderStatus } from "@/lib/alerts";
 
@@ -23,12 +24,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  let body: Partial<{
-    displayName: string;
-    email: string;
-    phone: string;
-    alertSettings: Record<string, boolean>;
-  }>;
+  let body: Partial<UserProfile>;
 
   try {
     body = await req.json();

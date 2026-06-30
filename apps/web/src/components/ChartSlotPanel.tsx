@@ -8,6 +8,7 @@ import type { MultiChartSlot } from "@/lib/store";
 import { executeSlotTrade } from "@/lib/autoTradeRunner";
 import { filterMarkersForSymbol } from "@/lib/chart-marker-utils";
 import { persistAutoTradeSlot } from "@/lib/auto-trade-client";
+import { resetSafetyStopClient } from "@/lib/reset-safety-stop-client";
 import { ShoppingCart, DollarSign, Play, Pause, ShieldAlert } from "lucide-react";
 
 const TradingChart = dynamic(
@@ -141,9 +142,7 @@ export function ChartSlotPanel({ slot }: ChartSlotPanelProps) {
           <ShieldAlert className="h-3 w-3 text-[var(--danger)]" />
           <span className="text-[10px] text-[var(--danger)]">Safety stop — auto paused</span>
           <button
-            onClick={() =>
-              updateMultiChartSlot(slot.id, { safetyStopActive: false, consecutiveLosses: 0 })
-            }
+            onClick={() => void resetSafetyStopClient(slot.id)}
             className="ml-auto text-[10px] text-[var(--danger)] underline"
           >
             Reset
