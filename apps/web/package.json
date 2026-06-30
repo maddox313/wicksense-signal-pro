@@ -6,7 +6,7 @@
     "dev": "node --max-old-space-size=4096 ../../node_modules/next/dist/bin/next dev",
     "build": "prisma generate && next build",
     "start": "next start",
-    "start:prod": "prisma db push --skip-generate && next start -H 0.0.0.0",
+    "start:prod": "prisma db push --skip-generate && node scripts/start-prod.mjs",
     "worker:trade-engine": "node scripts/trade-engine-worker.mjs",
     "lint": "next lint",
     "db:push": "prisma db push",
