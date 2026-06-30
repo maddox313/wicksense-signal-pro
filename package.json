@@ -5,11 +5,6 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "dependencies": {
-    "@tailwindcss/postcss": "^4.3.1",
-    "postcss": "^8.5.15",
-    "tailwindcss": "^4.3.1"
-  },
   "workspaces": [
     "apps/*",
     "packages/*"
