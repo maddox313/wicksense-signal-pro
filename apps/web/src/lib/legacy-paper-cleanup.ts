@@ -27,7 +27,9 @@ import {
   upsertTrade,
 } from "@/lib/trade-store";
 
-const LEGACY_BLOCK_PATH = path.join(process.cwd(), "legacy-paper-block.local.json");
+import { dataFile } from "@/lib/data-paths";
+
+const LEGACY_BLOCK_PATH = dataFile("legacy-paper-block.local.json");
 
 interface LegacyPaperBlockFile {
   blockedSymbols: string[];

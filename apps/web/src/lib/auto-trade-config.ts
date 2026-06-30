@@ -1,8 +1,9 @@
 import fs from "fs";
-import path from "path";
 import { ALL_CHART_SLOT_IDS } from "@/lib/chart-slots";
 
-const CONFIG_PATH = path.join(process.cwd(), "auto-trade.local.json");
+import { dataFile } from "@/lib/data-paths";
+
+const CONFIG_PATH = dataFile("auto-trade.local.json");
 
 export type AutoTradeSlotSettings = Record<string, boolean>;
 

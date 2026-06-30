@@ -1,12 +1,13 @@
 import fs from "fs";
-import path from "path";
 import {
   DEFAULT_TRADING_SCHEDULE,
   normalizeTradingSchedule,
   type TradingScheduleSettings,
 } from "@wicksense/core";
 
-const CONFIG_PATH = path.join(process.cwd(), "trading-schedule.local.json");
+import { dataFile } from "@/lib/data-paths";
+
+const CONFIG_PATH = dataFile("trading-schedule.local.json");
 
 export function loadTradingScheduleSettings(): TradingScheduleSettings {
   try {

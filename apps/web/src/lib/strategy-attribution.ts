@@ -10,7 +10,9 @@ export interface StrategyAttribution {
   entryTime: number;
 }
 
-const CONFIG_PATH = path.join(process.cwd(), "strategy-attributions.local.json");
+import { dataFile } from "@/lib/data-paths";
+
+const CONFIG_PATH = dataFile("strategy-attributions.local.json");
 
 function attributionKey(symbol: string, side: TradeSide, mode: TradeMode): string {
   return `${mode}:${symbol}:${side}`;

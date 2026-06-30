@@ -1,5 +1,4 @@
 import fs from "fs";
-import path from "path";
 import type { Trade as PrismaTrade } from "@prisma/client";
 import type { Trade, TradeMode } from "@wicksense/core";
 import { isAccountSyncTrade } from "@wicksense/core";
@@ -12,8 +11,10 @@ import {
   persistTradeAutoExitFields,
 } from "@/lib/auto-exit-meta";
 
-const LEGACY_TRADES_PATH = path.join(process.cwd(), "trades.local.json");
-const LEGACY_BACKUP_PATH = path.join(process.cwd(), "trades.local.json.bak");
+import { dataFile } from "@/lib/data-paths";
+
+const LEGACY_TRADES_PATH = dataFile("trades.local.json");
+const LEGACY_BACKUP_PATH = dataFile("trades.local.json.bak");
 
 let storeReady: Promise<void> | null = null;
 

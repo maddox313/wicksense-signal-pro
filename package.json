@@ -2,13 +2,17 @@
   "name": "wicksense-signal-pro",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "scripts": {
     "dev": "npm run dev -w @wicksense/web",
-    "build": "npm run build -w @wicksense/web",
+    "build": "npm run db:generate -w @wicksense/web && npm run build -w @wicksense/web",
+    "start:prod": "npm run start:prod -w @wicksense/web",
     "lint": "npm run lint -w @wicksense/web"
   }
 }

@@ -1,0 +1,55 @@
+# WickSense Signal Pro — Render Blueprint
+# Connect this repo in Render Dashboard → New → Blueprint → apply this file.
+# Requires a paid plan for persistent disk (Starter+).
+
+services:
+  - type: web
+    name: wicksense-signal-pro
+    runtime: node
+    region: oregon
+    plan: starter
+    branch: development
+    rootDir: .
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start:prod -w @wicksense/web
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: wicksense-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        value: file:/var/data/wicksense.db
+      - key: WICKSENSE_DATA_DIR
+        value: /var/data
+      - key: TRADE_ENGINE_ENABLED
+        value: "true"
+      - key: NPM_CONFIG_PRODUCTION
+        value: "false"
+      - key: ALPACA_API_KEY
+        sync: false
+      - key: ALPACA_SECRET_KEY
+        sync: false
+      - key: ALPACA_PAPER
+        value: "true"
+      - key: CRON_SECRET
+        generateValue: true
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM_NUMBER
+        sync: false

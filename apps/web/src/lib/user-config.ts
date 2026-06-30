@@ -1,5 +1,4 @@
 import fs from "fs";
-import path from "path";
 import type { AlertSettings } from "@wicksense/core";
 import { DEFAULT_ALERT_SETTINGS } from "@wicksense/core";
 
@@ -10,7 +9,9 @@ export interface UserProfile {
   alertSettings: AlertSettings;
 }
 
-const CONFIG_PATH = path.join(process.cwd(), "user.local.json");
+import { dataFile } from "@/lib/data-paths";
+
+const CONFIG_PATH = dataFile("user.local.json");
 
 const DEFAULT_PROFILE: UserProfile = {
   displayName: "Trader",

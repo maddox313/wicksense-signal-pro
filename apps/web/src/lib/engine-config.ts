@@ -1,11 +1,11 @@
 import fs from "fs";
-import path from "path";
 import type { RiskSettings, TradeMode, TradingStyle } from "@wicksense/core";
 import { DEFAULT_RISK_SETTINGS } from "@wicksense/core";
 import { MAIN_CHART_SLOT, MULTI_CHART_SLOT_IDS } from "@/lib/chart-slots";
 import { DEFAULT_MAIN_CHART_PREFS } from "@/lib/main-chart-prefs";
+import { dataFile } from "@/lib/data-paths";
 
-const CONFIG_PATH = path.join(process.cwd(), "engine-config.local.json");
+const CONFIG_PATH = dataFile("engine-config.local.json");
 
 export interface EngineSlotConfig {
   symbol: string;
@@ -139,7 +139,8 @@ export function patchEngineSlot(
   patch: Partial<EngineSlotConfig>
 ): EngineConfig {
   if (slotId === MAIN_CHART_SLOT) {
-    return saveEngineConfig({ main: patch });
+    const current = loadEngineConfig();
+    return saveEngineConfig({ main: { ...current.main, ...patch } });
   }
   if (MULTI_CHART_SLOT_IDS.includes(slotId as (typeof MULTI_CHART_SLOT_IDS)[number])) {
     const current = loadEngineConfig();

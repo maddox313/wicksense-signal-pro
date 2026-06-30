@@ -1,12 +1,13 @@
 import fs from "fs";
-import path from "path";
 import type {
   EngineTelemetryState,
   SlotScanRecord,
   StrategyTelemetrySlice,
 } from "@/lib/strategy-engine-telemetry";
 
-const TELEMETRY_PATH = path.join(process.cwd(), "engine-telemetry.local.json");
+import { dataFile } from "@/lib/data-paths";
+
+const TELEMETRY_PATH = dataFile("engine-telemetry.local.json");
 const ENGINE_POLL_MS = 30_000;
 
 function emptyStrategySlice(): StrategyTelemetrySlice {

@@ -4,16 +4,21 @@
   "private": true,
   "scripts": {
     "dev": "node --max-old-space-size=4096 ../../node_modules/next/dist/bin/next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
+    "start:prod": "prisma db push --skip-generate && next start -H 0.0.0.0",
     "worker:trade-engine": "node scripts/trade-engine-worker.mjs",
     "lint": "next lint",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "test:sync": "node --experimental-strip-types --test src/lib/position-sync-helpers.test.ts src/lib/alpaca-order-fill.test.ts"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
     "@prisma/client": "^6.5.0",
+    "prisma": "^6.5.0",
     "@wicksense/core": "*",
     "lightweight-charts": "^5.0.3",
     "lucide-react": "^0.475.0",
@@ -31,7 +36,6 @@
     "@types/react-dom": "^19.0.4",
     "eslint": "^9.21.0",
     "eslint-config-next": "^15.2.0",
-    "prisma": "^6.5.0",
     "tailwindcss": "^4.0.9",
     "typescript": "^5.8.2"
   }

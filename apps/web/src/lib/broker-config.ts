@@ -1,5 +1,4 @@
 import fs from "fs";
-import path from "path";
 
 export interface BrokerKeySet {
   apiKey: string;
@@ -19,7 +18,9 @@ export interface BrokerConfig {
   paper?: boolean;
 }
 
-const CONFIG_PATH = path.join(process.cwd(), "broker.local.json");
+import { dataFile } from "@/lib/data-paths";
+
+const CONFIG_PATH = dataFile("broker.local.json");
 
 export function loadBrokerConfig(): BrokerConfig | null {
   try {

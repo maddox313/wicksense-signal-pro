@@ -9,7 +9,9 @@ interface SessionAlertState {
   actionRequiredDays?: Record<string, string>;
 }
 
-const STATE_PATH = path.join(process.cwd(), "trading-schedule-alert-state.local.json");
+import { dataFile } from "@/lib/data-paths";
+
+const STATE_PATH = dataFile("trading-schedule-alert-state.local.json");
 
 function loadState(): SessionAlertState {
   try {

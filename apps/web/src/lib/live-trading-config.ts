@@ -1,9 +1,9 @@
 import fs from "fs";
-import path from "path";
 import type { LiveTradingSettings } from "@wicksense/core";
 import { DEFAULT_LIVE_TRADING_SETTINGS } from "@wicksense/core";
+import { dataFile } from "@/lib/data-paths";
 
-const CONFIG_PATH = path.join(process.cwd(), "live-trading.local.json");
+const CONFIG_PATH = dataFile("live-trading.local.json");
 
 export function loadLiveTradingSettings(): LiveTradingSettings {
   try {
