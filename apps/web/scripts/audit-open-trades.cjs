@@ -1,8 +1,8 @@
-const { PrismaClient } = require("@prisma/client");
 const fs = require("fs");
 const path = require("path");
+const { createPrismaClient } = require("./prisma-client.cjs");
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const ET = "America/New_York";
 
 function et(ts) {

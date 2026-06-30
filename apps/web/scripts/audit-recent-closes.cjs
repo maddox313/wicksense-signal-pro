@@ -1,5 +1,5 @@
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const { createPrismaClient } = require("./prisma-client.cjs");
+const prisma = createPrismaClient();
 const ET = { timeZone: "America/New_York" };
 
 async function main() {
