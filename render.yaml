@@ -1,6 +1,5 @@
 # WickSense Signal Pro — Render Blueprint
 # Connect this repo in Render Dashboard → New → Blueprint → apply this file.
-# Requires a paid plan for persistent disk (Starter+).
 
 services:
   - type: web
@@ -14,17 +13,11 @@ services:
     startCommand: npm run start:prod -w @wicksense/web
     healthCheckPath: /api/health
     autoDeploy: true
-    disk:
-      name: wicksense-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        value: file:/var/data/wicksense.db
-      - key: WICKSENSE_DATA_DIR
-        value: /var/data
+        value: file:./wicksense.db
       - key: TRADE_ENGINE_ENABLED
         value: "true"
       - key: NPM_CONFIG_PRODUCTION

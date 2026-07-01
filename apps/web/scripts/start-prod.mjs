@@ -2,14 +2,10 @@
 /**
  * Production Next.js server — binds 0.0.0.0 on PORT (Render injects PORT).
  */
-import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
-const require = createRequire(import.meta.url);
-require("../render-data-env.cjs").applyRenderEnv();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(__dirname, "..");
