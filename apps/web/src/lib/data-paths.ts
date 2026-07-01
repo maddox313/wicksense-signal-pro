@@ -7,7 +7,7 @@ function isNextProductionBuild(): boolean {
 
 /**
  * Writable data directory for SQLite, engine config, and *.local.json files.
- * Set WICKSENSE_DATA_DIR=/var/data on Render (persistent disk mount).
+ * Set WICKSENSE_DATA_DIR=/var/data/data on Render (child of persistent disk mount).
  */
 export function getDataDir(): string {
   const configured = process.env.WICKSENSE_DATA_DIR?.trim();
