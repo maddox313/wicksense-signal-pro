@@ -1,9 +1,12 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { applyRenderEnv, normalizeDatabaseUrl } = require("./render-data-env.cjs");
+
+applyRenderEnv();
 
 function readDatabaseUrl() {
   if (process.env.DATABASE_URL) {
-    return process.env.DATABASE_URL;
+    return normalizeDatabaseUrl(process.env.DATABASE_URL);
   }
 
   const envPath = path.join(__dirname, ".env");
