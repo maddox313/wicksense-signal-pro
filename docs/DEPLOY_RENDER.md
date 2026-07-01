@@ -25,7 +25,7 @@ Deploy directly from GitHub. The server-side trade engine starts automatically v
 | Setting | Value |
 |---------|--------|
 | **Root Directory** | `.` (repo root — **not** `apps/web`) |
-| **Build Command** | `npm ci && npm run build` |
+| **Build Command** | `npm ci --include=dev && npm run build` |
 | **Start Command** | `npm run start:prod -w @wicksense/web` |
 | **Health Check Path** | `/api/health` |
 
