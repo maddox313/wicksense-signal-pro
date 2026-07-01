@@ -32,15 +32,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const profile = saveUserProfile(body);
+  try {
+    const profile = saveUserProfile(body);
 
-  return NextResponse.json({
-    success: true,
-    displayName: profile.displayName,
-    email: profile.email,
-    phone: profile.phone,
-    emailPreview: maskEmail(profile.email),
-    phonePreview: maskPhone(profile.phone),
-    alertSettings: profile.alertSettings,
-  });
+    return NextResponse.json({
+      success: true,
+      displayName: profile.displayName,
+      email: profile.email,
+      phone: profile.phone,
+      emailPreview: maskEmail(profile.email),
+      phonePreview: maskPhone(profile.phone),
+      alertSettings: profile.alertSettings,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[/api/settings/profile] save failed:", message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }

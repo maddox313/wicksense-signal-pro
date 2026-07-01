@@ -6,7 +6,7 @@
     "dev": "node --max-old-space-size=4096 ./node_modules/next/dist/bin/next dev",
     "build": "npx prisma generate && npm rebuild lightningcss @tailwindcss/oxide && next build",
     "start": "next start",
-    "start:prod": "npx prisma db push --url file:./wicksense.db && node scripts/start-prod.mjs",
+    "start:prod": "npx prisma db push && node scripts/start-prod.mjs",
     "worker:trade-engine": "node scripts/trade-engine-worker.mjs",
     "lint": "next lint",
     "db:push": "prisma db push",

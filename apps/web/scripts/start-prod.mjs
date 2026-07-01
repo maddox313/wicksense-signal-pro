@@ -9,10 +9,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-require("../database-url.cjs").applyProductionDatabaseUrl();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(__dirname, "..");
+require(path.join(webRoot, "database-url.cjs")).applyProductionEnv(webRoot);
 const localNext = path.resolve(webRoot, "node_modules/next/dist/bin/next");
 const rootNext = path.resolve(webRoot, "../../node_modules/next/dist/bin/next");
 const nextBin = existsSync(localNext) ? localNext : rootNext;

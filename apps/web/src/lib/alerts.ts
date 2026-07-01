@@ -30,11 +30,17 @@ export function getAlertProviderStatus(): AlertProviderStatus {
 }
 
 function twilioStatus(): "twilio" | "none" {
+  const fromNumber = process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM_NUMBER;
   return process.env.TWILIO_ACCOUNT_SID &&
     process.env.TWILIO_AUTH_TOKEN &&
-    process.env.TWILIO_PHONE_NUMBER
+    fromNumber
     ? "twilio"
     : "none";
+}
+
+/** Set ALERTS_EMAIL_ENABLED=false to suppress all outbound email alerts. */
+function isEmailAlertsEnabled(): boolean {
+  return process.env.ALERTS_EMAIL_ENABLED !== "false";
 }
 
 function isTypeEnabled(type: AlertType, settings: AlertSettings): boolean {
@@ -76,14 +82,22 @@ export async function sendAlert(
   }
 
   if (settings.emailEnabled && contact.email) {
-    try {
-      const emailContent = buildAlertEmailContent(type, message, details);
-      await sendEmail(contact.email, emailContent.subject, emailContent.text, emailContent.html);
-      channels.push({ channel: "email", sent: true });
-    } catch (err) {
-      const error = err instanceof Error ? err.message : "Email send failed";
-      console.error("[Alert email error]", error);
-      channels.push({ channel: "email", sent: false, error });
+    if (!isEmailAlertsEnabled()) {
+      channels.push({
+        channel: "email",
+        sent: false,
+        error: "Email alerts disabled (ALERTS_EMAIL_ENABLED=false)",
+      });
+    } else {
+      try {
+        const emailContent = buildAlertEmailContent(type, message, details);
+        await sendEmail(contact.email, emailContent.subject, emailContent.text, emailContent.html);
+        channels.push({ channel: "email", sent: true });
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Email send failed";
+        console.error("[Alert email error]", error);
+        channels.push({ channel: "email", sent: false, error });
+      }
     }
   } else if (settings.emailEnabled && !contact.email) {
     console.warn("[Alert skipped] Email enabled but no address in Profile");
@@ -193,7 +207,7 @@ function normalizePhone(phone: string) {
 async function sendSms(to: string, body: string): Promise<{ status: string; sid?: string }> {
   const sid = process.env.TWILIO_ACCOUNT_SID;
   const token = process.env.TWILIO_AUTH_TOKEN;
-  const from = process.env.TWILIO_PHONE_NUMBER;
+  const from = process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM_NUMBER;
 
   if (!sid || !token || !from) {
     console.log(`[SMS stub] To: ${to}: ${body}`);
