@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { hasPaperCredentials, fetchAlpacaAccount } from "@/lib/alpaca";
 import { prisma } from "@/lib/db";
 import { getDataDir } from "@/lib/data-paths";
+import { getDatabaseUrl } from "@/lib/database-url";
 import { isTradeEngineEnabled } from "@/lib/server-trade-engine";
 import { loadServerEngineTelemetry } from "@/lib/server-engine-telemetry";
 
@@ -31,9 +32,7 @@ export async function GET() {
       latencyMs: Date.now() - started,
       version: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? "local",
       dataDir: getDataDir(),
-      database: process.env.DATABASE_URL?.startsWith("file:")
-        ? process.env.DATABASE_URL
-        : "configured",
+      database: getDatabaseUrl(),
       tradeEngine: {
         enabled: engineEnabled,
         runsInProcess: true,

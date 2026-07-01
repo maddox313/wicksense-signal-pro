@@ -1,14 +1,11 @@
 require("dotenv/config");
 const { PrismaClient } = require("@prisma/client");
 const { PrismaBetterSqlite3 } = require("@prisma/adapter-better-sqlite3");
+const { getDatabaseUrl } = require("../database-url.cjs");
 
 function createPrismaClient() {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    throw new Error("DATABASE_URL is not set");
-  }
   return new PrismaClient({
-    adapter: new PrismaBetterSqlite3({ url }),
+    adapter: new PrismaBetterSqlite3({ url: getDatabaseUrl() }),
   });
 }
 
