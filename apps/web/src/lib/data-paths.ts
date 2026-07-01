@@ -1,6 +1,10 @@
 import fs from "fs";
 import path from "path";
 
+function isNextProductionBuild(): boolean {
+  return process.env.NEXT_PHASE === "phase-production-build";
+}
+
 /**
  * Writable data directory for SQLite, engine config, and *.local.json files.
  * Set WICKSENSE_DATA_DIR=/var/data on Render (persistent disk mount).
@@ -8,7 +12,15 @@ import path from "path";
 export function getDataDir(): string {
   const configured = process.env.WICKSENSE_DATA_DIR?.trim();
   if (configured) {
-    fs.mkdirSync(configured, { recursive: true });
+    try {
+      fs.mkdirSync(configured, { recursive: true });
+    } catch (error) {
+      // Render's persistent disk is mounted at runtime, not during `next build`.
+      if (isNextProductionBuild()) {
+        return process.cwd();
+      }
+      throw error;
+    }
     return configured;
   }
   return process.cwd();
