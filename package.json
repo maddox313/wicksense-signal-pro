@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "dev": "npm run dev -w @wicksense/web",
-    "build": "npm ci --install-strategy=nested && npm run build -w @wicksense/web",
+    "build": "npm ci && npm run build -w @wicksense/web",
     "start:prod": "npm run start:prod -w @wicksense/web",
     "lint": "npm run lint -w @wicksense/web"
   }

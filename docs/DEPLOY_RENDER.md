@@ -25,7 +25,7 @@ Deploy directly from GitHub. The server-side trade engine starts automatically v
 | Setting | Value |
 |---------|--------|
 | **Root Directory** | `.` (repo root — **not** `apps/web`) |
-| **Build Command** | `npm ci --install-strategy=nested && npm run build` |
+| **Build Command** | `npm ci && npm run build` |
 | **Start Command** | `npm run start:prod -w @wicksense/web` |
 | **Health Check Path** | `/api/health` |
 
@@ -85,8 +85,8 @@ Pre-deploy snapshot: `PRE-SAAS-DEPLOY-BACKUP`
 
 | Issue | Fix |
 |-------|-----|
-| `sh: prisma: not found` | **Root Directory must be `.`**, not `apps/web`. Build command must be `npm ci --install-strategy=nested && npm run build`. Clear build cache and redeploy latest `development` commit. |
-| `lightningcss.linux-x64-gnu.node` not found | Full `npm ci` from repo root (not `-w` only install). Platform optional deps are in `apps/web` `optionalDependencies`. Clear build cache and redeploy. |
+| `sh: prisma: not found` | **Root Directory must be `.`**, not `apps/web`. Build command must be `npm ci && npm run build`. Clear build cache and redeploy latest `development` commit. |
+| `lightningcss` / `@tailwindcss/oxide` native binding not found | Do not use `install-strategy=nested`. Run full `npm ci` from repo root. Clear build cache and redeploy. |
 | Health check 503 | Check `DATABASE_URL` and disk mount |
 | `totalCycles` stays 0 | Confirm `TRADE_ENGINE_ENABLED=true`, check logs |
 | Trades not placing | Open UI once to sync `engine-config.local.json`; check schedule |

@@ -10,7 +10,7 @@ services:
     plan: starter
     branch: development
     rootDir: .
-    buildCommand: npm ci --install-strategy=nested && npm run build
+    buildCommand: npm ci && npm run build
     startCommand: npm run start:prod -w @wicksense/web
     healthCheckPath: /api/health
     autoDeploy: true
@@ -37,6 +37,8 @@ services:
         value: "true"
       - key: CRON_SECRET
         generateValue: true
+      - key: ALERTS_EMAIL_ENABLED
+        value: "false"
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
