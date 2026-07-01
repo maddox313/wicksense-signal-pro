@@ -39,8 +39,8 @@ Deploy directly from GitHub. The server-side trade engine starts automatically v
 ### Production database path
 
 ```
-DATABASE_URL=file:/var/data/data/wicksense.db
-WICKSENSE_DATA_DIR=/var/data/data
+DATABASE_URL=file:/var/data/wicksense.db
+WICKSENSE_DATA_DIR=/var/data
 ```
 
 All `*.local.json` config files (auto-trade, schedule, engine-config, etc.) are written under `WICKSENSE_DATA_DIR`.
@@ -50,8 +50,8 @@ All `*.local.json` config files (auto-trade, schedule, engine-config, etc.) are 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `NODE_ENV` | Yes | `production` |
-| `DATABASE_URL` | Yes | `file:/var/data/data/wicksense.db` |
-| `WICKSENSE_DATA_DIR` | Yes | `/var/data/data` (writable child of disk mount at `/var/data`) |
+| `DATABASE_URL` | Yes | `file:/var/data/wicksense.db` |
+| `WICKSENSE_DATA_DIR` | Yes | `/var/data` (Render persistent disk mount path) |
 | `TRADE_ENGINE_ENABLED` | Yes | `true` — in-process 30s trade engine |
 | `ALPACA_API_KEY` | Yes | Alpaca API key |
 | `ALPACA_SECRET_KEY` | Yes | Alpaca secret |
@@ -75,7 +75,7 @@ Open the deployed URL once and:
 
 1. Settings → confirm broker keys (or rely on env vars)
 2. Enable auto-trade per chart slot
-3. Set trading schedule / risk — saves to `/var/data/data/*.local.json`
+3. Set trading schedule / risk — saves to `/var/data/*.local.json`
 
 ## Backup branch
 

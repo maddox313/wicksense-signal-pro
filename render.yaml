@@ -22,9 +22,9 @@ services:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        value: file:/var/data/data/wicksense.db
+        value: file:/var/data/wicksense.db
       - key: WICKSENSE_DATA_DIR
-        value: /var/data/data
+        value: /var/data
       - key: TRADE_ENGINE_ENABLED
         value: "true"
       - key: NPM_CONFIG_PRODUCTION
