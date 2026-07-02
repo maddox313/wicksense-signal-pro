@@ -90,3 +90,9 @@ model Preset {
   isAiGenerated Boolean @default(false)
   enabled      Boolean @default(true)
 }
+
+model AppSetting {
+  key       String   @id
+  valueJson String
+  updatedAt DateTime @updatedAt
+}

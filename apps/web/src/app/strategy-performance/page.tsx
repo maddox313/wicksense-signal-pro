@@ -62,6 +62,9 @@ export default function StrategyPerformancePage() {
   const [serverTelemetry, setServerTelemetry] = useState<EngineTelemetryState | null>(null);
   const [workerEnabled, setWorkerEnabled] = useState<boolean | null>(null);
   const [serverEngineRunning, setServerEngineRunning] = useState(false);
+  const [scheduleAllowed, setScheduleAllowed] = useState<boolean | null>(null);
+  const [scheduleReason, setScheduleReason] = useState<string | null>(null);
+  const [scheduleUnrestricted, setScheduleUnrestricted] = useState<boolean | null>(null);
 
   const activePreset =
     presets.find((preset) => preset.id === activePresetId) ?? presets[0];
@@ -80,10 +83,18 @@ export default function StrategyPerformancePage() {
           telemetry?: EngineTelemetryState;
           workerEnabled?: boolean;
           engineRunning?: boolean;
+          scheduleAllowed?: boolean;
+          scheduleReason?: string | null;
+          scheduleUnrestricted?: boolean;
         };
         if (data.telemetry) setServerTelemetry(data.telemetry);
         if (typeof data.workerEnabled === "boolean") setWorkerEnabled(data.workerEnabled);
         if (typeof data.engineRunning === "boolean") setServerEngineRunning(data.engineRunning);
+        if (typeof data.scheduleAllowed === "boolean") setScheduleAllowed(data.scheduleAllowed);
+        setScheduleReason(data.scheduleReason ?? null);
+        if (typeof data.scheduleUnrestricted === "boolean") {
+          setScheduleUnrestricted(data.scheduleUnrestricted);
+        }
       } catch {
         /* non-blocking */
       }
@@ -132,6 +143,14 @@ export default function StrategyPerformancePage() {
   const engineTelemetry = useMemo(() => {
     const client = loadEngineTelemetry();
     if (!serverTelemetry) return client;
+    const mergedScans =
+      serverTelemetry.lastSlotScans.length > 0
+        ? serverTelemetry.lastSlotScans
+        : client.lastSlotScans;
+    const lastSlotScans =
+      scheduleAllowed === true
+        ? mergedScans.filter((scan) => scan.outcome !== "schedule_blocked")
+        : mergedScans;
     return {
       ...client,
       ...serverTelemetry,
@@ -139,13 +158,10 @@ export default function StrategyPerformancePage() {
       lastCycleCompletedAt:
         Math.max(client.lastCycleCompletedAt ?? 0, serverTelemetry.lastCycleCompletedAt ?? 0) ||
         null,
-      lastSlotScans:
-        serverTelemetry.lastSlotScans.length > 0
-          ? serverTelemetry.lastSlotScans
-          : client.lastSlotScans,
+      lastSlotScans,
       perStrategy: { ...client.perStrategy, ...serverTelemetry.perStrategy },
     };
-  }, [activityVersion, lastUpdated, serverTelemetry]);
+  }, [activityVersion, lastUpdated, serverTelemetry, scheduleAllowed]);
 
   const telemetryOverlay = useMemo(
     () =>
@@ -266,6 +282,18 @@ export default function StrategyPerformancePage() {
           <p>
             Active preset:{" "}
             <span className="text-white">{activePreset?.name ?? "None loaded"}</span>
+          </p>
+          <p>
+            Schedule:{" "}
+            <span className={scheduleAllowed ? "text-[var(--accent)]" : "text-[var(--danger)]"}>
+              {scheduleAllowed == null
+                ? "—"
+                : scheduleAllowed
+                  ? scheduleUnrestricted
+                    ? "Unrestricted"
+                    : "Allowed now"
+                  : scheduleReason ?? "Blocked"}
+            </span>
           </p>
         </div>
         {engineTelemetry.lastDetectError && (

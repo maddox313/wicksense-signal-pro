@@ -39,9 +39,9 @@ import {
   deleteSyncImportsForPosition,
 } from "@/lib/trade-store";
 import { syncAlpacaPositions } from "@/lib/position-sync";
-import { loadTradingScheduleSettings } from "@/lib/trading-schedule-config";
+import { loadTradingScheduleSettings, primeTradingScheduleCache } from "@/lib/trading-schedule-config";
 import { shouldSendExtendedHoursOrders, canEnterNewPositions } from "@wicksense/core";
-import { getTradingScheduleStatus } from "@/lib/trading-schedule-guard";
+import { getTradingScheduleStatusAsync } from "@/lib/trading-schedule-guard";
 import { isLegacyPaperBlockSymbol } from "@/lib/legacy-paper-cleanup";
 import { ensureTradeExitLevels } from "@/lib/auto-exit-levels";
 import { verifyCloseReasonFromFill } from "@/lib/trade-close-reason";
@@ -128,10 +128,11 @@ export async function POST(req: NextRequest) {
     signalBarTime?: number;
   };
 
+  await primeTradingScheduleCache();
   const scheduleCheck =
     side === "buy"
       ? canEnterNewPositions(loadTradingScheduleSettings())
-      : getTradingScheduleStatus();
+      : await getTradingScheduleStatusAsync();
   if (!scheduleCheck.allowed) {
     console.warn(`[execute] Blocked ${side} ${symbol}: ${scheduleCheck.reason ?? "Outside allowed trading hours"}`);
     return NextResponse.json({

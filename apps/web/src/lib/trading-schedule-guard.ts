@@ -1,7 +1,17 @@
 import { evaluateTradingSchedule, type TradingScheduleEvaluation } from "@wicksense/core";
-import { loadTradingScheduleSettings } from "@/lib/trading-schedule-config";
+import {
+  loadTradingScheduleSettings,
+  primeTradingScheduleCache,
+} from "@/lib/trading-schedule-config";
 
 export function getTradingScheduleStatus(date: Date = new Date()): TradingScheduleEvaluation {
+  return evaluateTradingSchedule(loadTradingScheduleSettings(), date);
+}
+
+export async function getTradingScheduleStatusAsync(
+  date: Date = new Date()
+): Promise<TradingScheduleEvaluation> {
+  await primeTradingScheduleCache();
   return evaluateTradingSchedule(loadTradingScheduleSettings(), date);
 }
 

@@ -4,12 +4,17 @@ import {
   normalizeTradingSchedule,
   type TradingScheduleSettings,
 } from "@wicksense/core";
+import { getAppSetting, setAppSetting } from "@/lib/app-settings";
 
 import { dataFile } from "@/lib/data-paths";
 
 const CONFIG_PATH = dataFile("trading-schedule.local.json");
+const DB_KEY = "trading_schedule";
 
-export function loadTradingScheduleSettings(): TradingScheduleSettings {
+let memoryCache: TradingScheduleSettings | null = null;
+let hydratePromise: Promise<TradingScheduleSettings> | null = null;
+
+function loadTradingScheduleFromFile(): TradingScheduleSettings {
   try {
     if (!fs.existsSync(CONFIG_PATH)) return { ...DEFAULT_TRADING_SCHEDULE };
     const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")) as Partial<TradingScheduleSettings>;
@@ -19,11 +24,52 @@ export function loadTradingScheduleSettings(): TradingScheduleSettings {
   }
 }
 
-export function saveTradingScheduleSettings(
+function writeTradingScheduleToFile(settings: TradingScheduleSettings): void {
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(settings, null, 2), "utf8");
+}
+
+export function loadTradingScheduleSettings(): TradingScheduleSettings {
+  return memoryCache ?? loadTradingScheduleFromFile();
+}
+
+export async function primeTradingScheduleCache(): Promise<TradingScheduleSettings> {
+  if (memoryCache) return memoryCache;
+  if (hydratePromise) return hydratePromise;
+
+  hydratePromise = (async () => {
+    const fromDb = await getAppSetting<Partial<TradingScheduleSettings>>(DB_KEY);
+    if (fromDb) {
+      memoryCache = normalizeTradingSchedule(fromDb);
+      writeTradingScheduleToFile(memoryCache);
+      return memoryCache;
+    }
+
+    const fromFile = loadTradingScheduleFromFile();
+    memoryCache = fromFile;
+
+    const differsFromDefault =
+      JSON.stringify(fromFile) !== JSON.stringify(DEFAULT_TRADING_SCHEDULE);
+    if (differsFromDefault) {
+      await setAppSetting(DB_KEY, fromFile);
+    }
+
+    return fromFile;
+  })();
+
+  try {
+    return await hydratePromise;
+  } finally {
+    hydratePromise = null;
+  }
+}
+
+export async function saveTradingScheduleSettings(
   updates: Partial<TradingScheduleSettings>
-): TradingScheduleSettings {
+): Promise<TradingScheduleSettings> {
   const next = normalizeTradingSchedule(updates);
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), "utf8");
+  memoryCache = next;
+  writeTradingScheduleToFile(next);
+  await setAppSetting(DB_KEY, next);
   return next;
 }
 

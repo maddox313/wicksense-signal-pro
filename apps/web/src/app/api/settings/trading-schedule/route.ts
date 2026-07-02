@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { evaluateTradingSchedule } from "@wicksense/core";
 import {
   loadTradingScheduleSettings,
+  primeTradingScheduleCache,
   saveTradingScheduleSettings,
   TRADING_SCHEDULE_CONFIG_PATH,
 } from "@/lib/trading-schedule-config";
 
 export async function GET() {
-  const settings = loadTradingScheduleSettings();
+  const settings = await primeTradingScheduleCache();
   const evaluation = evaluateTradingSchedule(settings);
 
   return NextResponse.json({
@@ -22,7 +23,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const settings = saveTradingScheduleSettings(body);
+  const settings = await saveTradingScheduleSettings(body);
   const evaluation = evaluateTradingSchedule(settings);
 
   return NextResponse.json({

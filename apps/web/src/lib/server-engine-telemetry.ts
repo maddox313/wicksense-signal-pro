@@ -122,6 +122,14 @@ export function clearServerDetectError(): void {
   saveServerEngineTelemetry(state);
 }
 
+export function clearServerScheduleBlockedScans(): void {
+  const state = loadServerEngineTelemetry();
+  const filtered = state.lastSlotScans.filter((scan) => scan.outcome !== "schedule_blocked");
+  if (filtered.length === state.lastSlotScans.length) return;
+  state.lastSlotScans = filtered;
+  saveServerEngineTelemetry(state);
+}
+
 export function recordServerScheduleBlocked(chartSlots: string[], reason?: string): void {
   const state = loadServerEngineTelemetry();
   const at = Date.now();

@@ -5,7 +5,7 @@ import { getDataDir } from "@/lib/data-paths";
 import { loadEngineConfig } from "@/lib/engine-config";
 import { loadServerEngineTelemetry } from "@/lib/server-engine-telemetry";
 import { getOpenTrades } from "@/lib/trade-store";
-import { getTradingScheduleStatus } from "@/lib/trading-schedule-guard";
+import { getTradingScheduleStatusAsync } from "@/lib/trading-schedule-guard";
 import {
   isAnyServerAutoTradeEnabled,
   isTradeEngineEnabled,
@@ -16,7 +16,7 @@ export async function GET() {
   const autoTradeSlots = loadAutoTradeSettings();
   const engineConfig = loadEngineConfig();
   const telemetry = loadServerEngineTelemetry();
-  const schedule = getTradingScheduleStatus();
+  const schedule = await getTradingScheduleStatusAsync();
   const openTrades = await getOpenTrades();
   const monitoredCount = selectCanonicalOpenTrades(openTrades).length;
 

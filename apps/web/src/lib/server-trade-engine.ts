@@ -10,8 +10,8 @@ import { fetchServerSlotBars } from "@/lib/server-bars";
 import { executeServerSlotTrade } from "@/lib/server-execute-trade";
 import { runSlotCycleWithContext } from "@/lib/slot-cycle-core";
 import { syncAllAlpacaPositions } from "@/lib/position-sync";
-import { loadTradingScheduleSettings } from "@/lib/trading-schedule-config";
-import { getTradingScheduleStatus } from "@/lib/trading-schedule-guard";
+import { loadTradingScheduleSettings, primeTradingScheduleCache } from "@/lib/trading-schedule-config";
+import { getTradingScheduleStatusAsync } from "@/lib/trading-schedule-guard";
 import { checkServerTradingScheduleAlerts } from "@/lib/server-trading-schedule-alerts";
 import { runDailyTradeArchiveIfDue } from "@/lib/daily-trade-archive";
 import { loadUserProfile } from "@/lib/user-config";
@@ -20,6 +20,7 @@ import { routeOpportunitiesToSlots } from "@/lib/slot-opportunity-router";
 import { syncRiskEnginesFromConfig } from "@/lib/risk-engine-registry";
 import {
   createServerSlotCycleTelemetryHooks,
+  clearServerScheduleBlockedScans,
   markServerEngineCycleComplete,
   markServerEngineCycleStart,
   recordServerScheduleBlocked,
@@ -87,10 +88,11 @@ export async function runTradeEngineTick(): Promise<TradeEngineTickResult> {
 
     const archiveResult = await runDailyTradeArchiveIfDue();
 
+    await primeTradingScheduleCache();
     const engine = loadEngineConfig();
     const profile = loadUserProfile();
     const tradingSchedule = loadTradingScheduleSettings();
-    const scheduleEval = getTradingScheduleStatus();
+    const scheduleEval = await getTradingScheduleStatusAsync();
 
     syncRiskEnginesFromConfig(engine.riskSettings);
 
@@ -128,6 +130,7 @@ export async function runTradeEngineTick(): Promise<TradeEngineTickResult> {
     if (scheduleEval.allowed) {
       const g = globalThis as typeof globalThis & { __wicksenseLoggedScheduleBlock?: string };
       g.__wicksenseLoggedScheduleBlock = undefined;
+      clearServerScheduleBlockedScans();
 
       if (enabledSlots.length > 0) {
         const scanTimeframe = engine.main.timeframe || activePreset.timeframe;
