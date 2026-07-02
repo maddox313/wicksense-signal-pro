@@ -1,19 +1,9 @@
-import type { Trade, TradeSide, TradingStyle } from "./types";
+import type { Trade, TradeCloseReason, TradeSide, TradingStyle } from "./types";
 
 export type AutoExitCloseReason = "TAKE_PROFIT" | "STOP_LOSS" | "SESSION_END";
 export type TradeOutcome = "win" | "loss";
 
-/** Verified exit reason persisted on closed trades (fill price is source of truth for TP/SL). */
-export type TradeCloseReason =
-  | "TAKE_PROFIT"
-  | "STOP_LOSS"
-  | "TIME_EXIT"
-  | "SIGNAL_SELL"
-  | "MANUAL"
-  | "ALPACA_SYNC"
-  | "SAFETY_EXIT"
-  | "MARKET_EXIT";
-
+export type { TradeCloseReason };
 /** Why a close was initiated before fill-price verification. */
 export type ExitTriggerContext =
   | "AUTO_MONITOR"
@@ -98,7 +88,7 @@ export function classifyExitFromFillPrice(
   exitPrice: number,
   stopLoss: number,
   takeProfit: number
-): "TAKE_PROFIT" | "STOP_LOSS" | null {
+): AutoExitCloseReason | null {
   return evaluateAutoExit(side, exitPrice, stopLoss, takeProfit);
 }
 
@@ -122,7 +112,7 @@ export function resolveVerifiedCloseReason(params: {
     takeProfit > 0
   ) {
     const levelHit = classifyExitFromFillPrice(side, exitPrice, stopLoss, takeProfit);
-    if (levelHit) return levelHit;
+    if (levelHit === "TAKE_PROFIT" || levelHit === "STOP_LOSS") return levelHit;
   }
 
   switch (trigger) {
