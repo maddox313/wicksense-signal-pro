@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_TRADING_SCHEDULE } from "./types.ts";
 import {
+  canEnterNewPositions,
   evaluateTradingSchedule,
   getEasternDayKey,
   isOvernightDayTrade,
@@ -57,6 +58,35 @@ describe("evaluateTradingSchedule", () => {
     });
     const overnight = new Date("2026-06-23T02:00:00Z"); // 22:00 ET Monday
     assert.equal(evaluateTradingSchedule(settings, overnight).allowed, true);
+  });
+});
+
+describe("canEnterNewPositions", () => {
+  const afterHours = new Date("2026-07-02T21:30:00Z"); // 5:30 PM ET Thursday
+
+  it("allows after-hours entries when unrestricted", () => {
+    const result = canEnterNewPositions(
+      { ...DEFAULT_TRADING_SCHEDULE, unrestricted: true },
+      afterHours
+    );
+    assert.equal(result.allowed, true);
+  });
+
+  it("blocks after-hours entries on the default weekday schedule", () => {
+    const result = canEnterNewPositions(DEFAULT_TRADING_SCHEDULE, afterHours);
+    assert.equal(result.allowed, false);
+    assert.match(result.reason ?? "", /allowed trading hours/i);
+  });
+
+  it("blocks after-hours entries when schedule allows scanning but RTH-only is implied", () => {
+    const settings = normalizeTradingSchedule({
+      ...DEFAULT_TRADING_SCHEDULE,
+      allowAfterHours: true,
+      startTime: "09:30",
+      endTime: "16:00",
+    });
+    const result = canEnterNewPositions(settings, afterHours);
+    assert.equal(result.allowed, true);
   });
 });
 

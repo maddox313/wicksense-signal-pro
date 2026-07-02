@@ -40,7 +40,7 @@ import {
 } from "@/lib/trade-store";
 import { syncAlpacaPositions } from "@/lib/position-sync";
 import { loadTradingScheduleSettings } from "@/lib/trading-schedule-config";
-import { shouldSendExtendedHoursOrders, isRegularUsEquitySession } from "@wicksense/core";
+import { shouldSendExtendedHoursOrders, canEnterNewPositions } from "@wicksense/core";
 import { getTradingScheduleStatus } from "@/lib/trading-schedule-guard";
 import { isLegacyPaperBlockSymbol } from "@/lib/legacy-paper-cleanup";
 import { ensureTradeExitLevels } from "@/lib/auto-exit-levels";
@@ -128,19 +128,15 @@ export async function POST(req: NextRequest) {
     signalBarTime?: number;
   };
 
-  const scheduleCheck = getTradingScheduleStatus();
+  const scheduleCheck =
+    side === "buy"
+      ? canEnterNewPositions(loadTradingScheduleSettings())
+      : getTradingScheduleStatus();
   if (!scheduleCheck.allowed) {
     console.warn(`[execute] Blocked ${side} ${symbol}: ${scheduleCheck.reason ?? "Outside allowed trading hours"}`);
     return NextResponse.json({
       skipped: true,
       reason: scheduleCheck.reason ?? "Outside allowed trading hours",
-    });
-  }
-
-  if (side === "buy" && !isRegularUsEquitySession()) {
-    return NextResponse.json({
-      skipped: true,
-      reason: "New entries only during regular market hours (9:30 AM – 4:00 PM ET)",
     });
   }
 

@@ -122,9 +122,10 @@ export function clearServerDetectError(): void {
   saveServerEngineTelemetry(state);
 }
 
-export function recordServerScheduleBlocked(chartSlots: string[]): void {
+export function recordServerScheduleBlocked(chartSlots: string[], reason?: string): void {
   const state = loadServerEngineTelemetry();
   const at = Date.now();
+  const detail = reason ?? "Outside allowed trading hours";
   const blockedScans: SlotScanRecord[] = chartSlots.map((chartSlot) => ({
     at,
     chartSlot,
@@ -137,7 +138,7 @@ export function recordServerScheduleBlocked(chartSlots: string[]): void {
     strategiesFired: [],
     pickedStrategy: null,
     outcome: "schedule_blocked",
-    detail: "Outside allowed trading hours",
+    detail,
   }));
 
   if (blockedScans.length === 0) {
@@ -153,7 +154,7 @@ export function recordServerScheduleBlocked(chartSlots: string[]): void {
       strategiesFired: [],
       pickedStrategy: null,
       outcome: "schedule_blocked",
-      detail: "Outside allowed trading hours",
+      detail,
     });
   }
 

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TradingScheduleSettings, WeekdayKey } from "@wicksense/core";
 import { DEFAULT_TRADING_SCHEDULE, evaluateTradingSchedule } from "@wicksense/core";
 import { useAppStore } from "@/lib/store";
+import { saveTradingSchedule } from "@/lib/trading-schedule-client";
 import { Clock, Save } from "lucide-react";
 
 const WEEKDAYS: { key: WeekdayKey; label: string }[] = [
@@ -24,6 +25,9 @@ export function TradingScheduleSection() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [statusNow, setStatusNow] = useState<string>("");
+  const hydratedRef = useRef(false);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedJsonRef = useRef("");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -31,14 +35,46 @@ export function TradingScheduleSection() {
     fetch("/api/settings/trading-schedule", { signal: controller.signal })
       .then((r) => r.json())
       .then((data) => {
-        if (data.settings) setSchedule(data.settings);
+        if (data.settings) {
+          setSchedule(data.settings);
+          lastSavedJsonRef.current = JSON.stringify(data.settings);
+          useAppStore.getState().setTradingSchedule(data.settings);
+        }
       })
       .catch(() => {})
       .finally(() => {
         clearTimeout(timeout);
         setLoading(false);
+        hydratedRef.current = true;
       });
   }, []);
+
+  useEffect(() => {
+    if (!hydratedRef.current || loading) return;
+
+    const json = JSON.stringify(schedule);
+    if (json === lastSavedJsonRef.current) return;
+
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      void (async () => {
+        setSaving(true);
+        setMessage(null);
+        const result = await saveTradingSchedule(schedule);
+        if (result.ok) {
+          lastSavedJsonRef.current = json;
+          setMessage("Trading schedule saved.");
+        } else {
+          setMessage(result.error ?? "Failed to save trading schedule");
+        }
+        setSaving(false);
+      })();
+    }, 600);
+
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [schedule, loading]);
 
   useEffect(() => {
     const update = () => {
@@ -64,26 +100,16 @@ export function TradingScheduleSection() {
   };
 
   const save = async () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     setSaving(true);
     setMessage(null);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15_000);
-      const res = await fetch("/api/settings/trading-schedule", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(schedule),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      const data = await res.json();
-      if (!res.ok) {
-        setMessage(data.error ?? "Failed to save — server may be busy, try again");
+      const result = await saveTradingSchedule(schedule);
+      if (!result.ok) {
+        setMessage(result.error ?? "Failed to save — server may be busy, try again");
         return;
       }
-      if (data.settings) {
-        useAppStore.getState().setTradingSchedule(data.settings);
-      }
+      lastSavedJsonRef.current = JSON.stringify(schedule);
       setMessage("Trading schedule saved.");
     } catch {
       setMessage("Save timed out — server busy. Stop extra dev servers and retry.");
@@ -101,8 +127,8 @@ export function TradingScheduleSection() {
             Allowed Trading Schedule
           </h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            Manual and auto trades are blocked outside these hours (US Eastern Time). Saved in{" "}
-            <code>trading-schedule.local.json</code>.
+            Manual and auto trades are blocked outside these hours (US Eastern Time). Changes save
+            automatically. Stored in <code>trading-schedule.local.json</code>.
           </p>
         </div>
         <p
@@ -194,7 +220,7 @@ export function TradingScheduleSection() {
         className="mt-5 flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-black disabled:opacity-40"
       >
         <Save className="h-4 w-4" />
-        {saving ? "Saving..." : "Save Trading Schedule"}
+        {saving ? "Saving..." : "Save Now"}
       </button>
 
       {message && (

@@ -2,8 +2,8 @@ import type { Signal, StrategyPreset, Trade, TradingScheduleSettings, AlertSetti
 import {
   detectCurrentBarSignals,
   detectFreshBarSignal,
+  canEnterNewPositions,
   evaluateTradingSchedule,
-  isRegularUsEquitySession,
 } from "@wicksense/core";
 import { logDuplicateSignalBlocked } from "@/lib/signal-dedupe-log";
 import type { FetchBarsResult, SlotTradeConfig } from "@/lib/autoTradeRunner";
@@ -165,7 +165,10 @@ export async function runSlotCycleWithContext(
       return;
     }
 
-    const scheduleCheck = evaluateTradingSchedule(ctx.tradingSchedule);
+    const scheduleCheck =
+      signal.side === "buy"
+        ? canEnterNewPositions(ctx.tradingSchedule)
+        : evaluateTradingSchedule(ctx.tradingSchedule);
     if (!scheduleCheck.allowed) {
       rejectSignal(scheduleCheck.reason ?? "Outside trading schedule");
       recordScan({
@@ -178,7 +181,7 @@ export async function runSlotCycleWithContext(
         barSignalCount: barSignals.length,
         strategiesFired,
         pickedStrategy: signal.strategy,
-        outcome: "signal_seen",
+        outcome: "schedule_blocked",
         detail: scheduleCheck.reason ?? "Outside trading schedule",
       });
       return;
@@ -198,24 +201,6 @@ export async function runSlotCycleWithContext(
         pickedStrategy: signal.strategy,
         outcome: "signal_seen",
         detail: "Safety stop active",
-      });
-      return;
-    }
-
-    if (signal.side === "buy" && !isRegularUsEquitySession()) {
-      rejectSignal("Entries only during regular market hours (9:30 AM – 4:00 PM ET)");
-      recordScan({
-        chartSlot: slotId,
-        symbol,
-        timeframe,
-        barCount: bars.length,
-        presetId: activePreset.id,
-        presetStrategies: activePreset.strategies,
-        barSignalCount: barSignals.length,
-        strategiesFired,
-        pickedStrategy: signal.strategy,
-        outcome: "schedule_blocked",
-        detail: "Regular hours only for new entries",
       });
       return;
     }

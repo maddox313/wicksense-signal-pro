@@ -231,6 +231,33 @@ export function evaluateTradingSchedule(
   };
 }
 
+/**
+ * Whether a new buy entry is allowed under the user's schedule.
+ * Unrestricted / after-hours / overnight settings override the RTH-only entry guard.
+ */
+export function canEnterNewPositions(
+  settings: TradingScheduleSettings,
+  date: Date = new Date()
+): TradingScheduleEvaluation {
+  const schedule = evaluateTradingSchedule(settings, date);
+  if (!schedule.allowed) {
+    return schedule;
+  }
+
+  if (settings.unrestricted || settings.allowAfterHours || settings.allowOvernight) {
+    return { allowed: true };
+  }
+
+  if (!isRegularUsEquitySession(date)) {
+    return {
+      allowed: false,
+      reason: "New entries only during regular market hours (9:30 AM – 4:00 PM ET)",
+    };
+  }
+
+  return { allowed: true };
+}
+
 const WEEKDAY_LABELS: Record<WeekdayKey, string> = {
   sun: "Sun",
   mon: "Mon",

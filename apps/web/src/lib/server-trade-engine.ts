@@ -152,7 +152,7 @@ export async function runTradeEngineTick(): Promise<TradeEngineTickResult> {
         console.log(`[trade-engine] Trading paused: ${scheduleEval.reason ?? "Outside trading schedule"}`);
         g.__wicksenseLoggedScheduleBlock = blockKey;
       }
-      recordServerScheduleBlocked(enabledSlots);
+      recordServerScheduleBlocked(enabledSlots, scheduleEval.reason);
     }
 
     if (enabledSlots.length > 0 && process.env.NODE_ENV === "development") {
