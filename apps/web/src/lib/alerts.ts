@@ -137,8 +137,18 @@ async function sendEmail(to: string, subject: string, text: string, html: string
   );
 }
 
+/** Resolved sender address for outbound alert email. */
+function resolveEmailFrom(fallback = "alerts@wicksense.pro"): string {
+  return (
+    process.env.EMAIL_FROM ||
+    process.env.SMTP_FROM ||
+    process.env.SMTP_USER ||
+    fallback
+  );
+}
+
 async function sendEmailViaResend(to: string, subject: string, text: string, html: string) {
-  const from = process.env.EMAIL_FROM || "WickSense <onboarding@resend.dev>";
+  const from = resolveEmailFrom("WickSense <onboarding@resend.dev>");
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -153,7 +163,7 @@ async function sendEmailViaResend(to: string, subject: string, text: string, htm
 }
 
 async function sendEmailViaSendGrid(to: string, subject: string, text: string, html: string) {
-  const fromEmail = process.env.EMAIL_FROM || process.env.SMTP_USER || "alerts@wicksense.pro";
+  const fromEmail = resolveEmailFrom();
   const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
     method: "POST",
     headers: {
@@ -188,7 +198,7 @@ async function sendEmailViaSmtp(to: string, subject: string, text: string, html:
   });
 
   await transporter.sendMail({
-    from: process.env.EMAIL_FROM || process.env.SMTP_USER || "alerts@wicksense.pro",
+    from: resolveEmailFrom(),
     to,
     subject,
     text,

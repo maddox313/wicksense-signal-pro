@@ -169,7 +169,7 @@ export const DEFAULT_RISK_SETTINGS: RiskSettings = {
 };
 
 export const DEFAULT_ALERT_SETTINGS: AlertSettings = {
-  emailEnabled: false,
+  emailEnabled: true,
   smsEnabled: false,
   pushEnabled: true,
   onBuy: true,

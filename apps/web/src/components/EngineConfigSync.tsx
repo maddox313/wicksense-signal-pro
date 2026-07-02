@@ -6,6 +6,7 @@ import {
   mainTradingSignature,
   slotTradingSignature,
 } from "@/lib/engine-config-sync-utils";
+import { hasStoredMainChartPrefs } from "@/lib/main-chart-prefs";
 
 function buildEngineConfigPayload(state: ReturnType<typeof useAppStore.getState>) {
   return {
@@ -48,13 +49,16 @@ export function EngineConfigSync() {
         if (!res.ok) return;
         const data = await res.json();
         const store = useAppStore.getState();
+        const preferLocalMain = hasStoredMainChartPrefs();
 
         if (data.activePresetId) store.setActivePresetId(data.activePresetId);
         if (data.riskSettings) store.setRiskSettings(data.riskSettings);
         if (data.main) {
-          if (data.main.symbol) store.setSymbol(data.main.symbol);
-          if (data.main.timeframe) store.setTimeframe(data.main.timeframe);
-          if (data.main.tradingStyle) store.setTradingStyle(data.main.tradingStyle);
+          if (!preferLocalMain) {
+            if (data.main.symbol) store.setSymbol(data.main.symbol);
+            if (data.main.timeframe) store.setTimeframe(data.main.timeframe);
+            if (data.main.tradingStyle) store.setTradingStyle(data.main.tradingStyle);
+          }
           if (data.main.mode) store.setMode(data.main.mode);
           store.setSafetyStopActive(Boolean(data.main.safetyStopActive));
           if (typeof data.main.consecutiveLosses === "number") {
@@ -82,6 +86,12 @@ export function EngineConfigSync() {
 
         const after = useAppStore.getState();
         lastSavedSigRef.current = `${mainTradingSignature(after)}|${slotTradingSignature(after.multiChartSlots)}`;
+
+        void fetch("/api/settings/engine-config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(buildEngineConfigPayload(after)),
+        });
       } finally {
         hydratedRef.current = true;
       }

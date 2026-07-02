@@ -1,6 +1,7 @@
 "use client";
 
 import { useAppStore } from "@/lib/store";
+import { TRADING_TIMEFRAMES } from "@/lib/main-chart-prefs";
 
 export function MarketDataPanel({
   quote,
@@ -11,7 +12,7 @@ export function MarketDataPanel({
 }) {
   const { symbol, timeframe, tradingStyle, setSymbol, setTimeframe, setTradingStyle } = useAppStore();
 
-  const timeframes = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
+  const timeframes = TRADING_TIMEFRAMES;
 
   return (
     <div className="rounded-xl border border-[var(--card-border)] bg-[var(--card)] p-4">

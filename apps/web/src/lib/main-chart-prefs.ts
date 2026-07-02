@@ -1,5 +1,8 @@
 import type { TradingStyle } from "@wicksense/core";
 
+export const TRADING_TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"] as const;
+export type TradingTimeframe = (typeof TRADING_TIMEFRAMES)[number];
+
 export interface MainChartPrefs {
   symbol: string;
   timeframe: string;
@@ -14,7 +17,7 @@ export const DEFAULT_MAIN_CHART_PREFS: MainChartPrefs = {
 
 const STORAGE_KEY = "wicksense-main-chart-prefs";
 
-const VALID_TIMEFRAMES = new Set(["1m", "5m", "15m", "30m", "1h", "4h", "1d"]);
+const VALID_TIMEFRAMES = new Set<string>(TRADING_TIMEFRAMES);
 
 function normalizeSymbol(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -47,6 +50,11 @@ export function loadMainChartPrefs(): MainChartPrefs {
   } catch {
     return { ...DEFAULT_MAIN_CHART_PREFS };
   }
+}
+
+export function hasStoredMainChartPrefs(): boolean {
+  if (typeof window === "undefined") return false;
+  return localStorage.getItem(STORAGE_KEY) !== null;
 }
 
 export function persistMainChartPrefs(prefs: MainChartPrefs): void {

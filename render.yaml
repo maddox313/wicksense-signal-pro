@@ -31,7 +31,7 @@ services:
       - key: CRON_SECRET
         generateValue: true
       - key: ALERTS_EMAIL_ENABLED
-        value: "false"
+        value: "true"
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
@@ -41,6 +41,8 @@ services:
       - key: SMTP_PASS
         sync: false
       - key: SMTP_FROM
+        sync: false
+      - key: EMAIL_FROM
         sync: false
       - key: TWILIO_ACCOUNT_SID
         sync: false

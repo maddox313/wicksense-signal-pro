@@ -8,6 +8,7 @@ import type { MultiChartSlot } from "@/lib/store";
 import { executeSlotTrade } from "@/lib/autoTradeRunner";
 import { filterMarkersForSymbol } from "@/lib/chart-marker-utils";
 import { persistAutoTradeSlot } from "@/lib/auto-trade-client";
+import { TRADING_TIMEFRAMES } from "@/lib/main-chart-prefs";
 import { resetSafetyStopClient } from "@/lib/reset-safety-stop-client";
 import { ShoppingCart, DollarSign, Play, Pause, ShieldAlert } from "lucide-react";
 
@@ -23,7 +24,7 @@ const TradingChart = dynamic(
   }
 );
 
-const TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "1d"] as const;
+const TIMEFRAMES = TRADING_TIMEFRAMES;
 
 interface ChartSlotPanelProps {
   slot: MultiChartSlot;

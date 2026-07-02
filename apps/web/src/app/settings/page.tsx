@@ -5,9 +5,10 @@ import Link from "next/link";
 import { useAppStore } from "@/lib/store";
 import type { RiskSettings, AlertSettings } from "@wicksense/core";
 import { CheckCircle, AlertCircle } from "lucide-react";
+import { TRADING_TIMEFRAMES } from "@/lib/main-chart-prefs";
 
 export default function SettingsPage() {
-  const { riskSettings, alertSettings, setRiskSettings, setAlertSettings } = useAppStore();
+  const { riskSettings, alertSettings, timeframe, tradingStyle, setRiskSettings, setAlertSettings, setTimeframe, setTradingStyle } = useAppStore();
   const [brokerStatus, setBrokerStatus] = useState<{
     paperConfigured: boolean;
     liveConfigured: boolean;
@@ -120,6 +121,53 @@ export default function SettingsPage() {
       </header>
 
       <div className="grid grid-cols-2 gap-6">
+        <section className="rounded-xl border border-[var(--card-border)] bg-[var(--card)] p-6">
+          <h2 className="mb-4 text-lg font-medium">Trading Engine</h2>
+          <p className="mb-4 text-xs text-[var(--muted)]">
+            Default chart timeframe for signals and auto-trade. Also changeable on the Chart page.
+          </p>
+          <div className="space-y-4">
+            <div>
+              <label className="mb-2 block text-xs text-[var(--muted)]">Timeframe</label>
+              <div className="flex flex-wrap gap-1">
+                {TRADING_TIMEFRAMES.map((tf) => (
+                  <button
+                    key={tf}
+                    type="button"
+                    onClick={() => setTimeframe(tf)}
+                    className={`rounded px-2.5 py-1.5 text-xs ${
+                      timeframe === tf
+                        ? "bg-[var(--accent)] text-black"
+                        : "bg-white/5 text-[var(--muted)] hover:text-white"
+                    }`}
+                  >
+                    {tf}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="mb-2 block text-xs text-[var(--muted)]">Trading style</label>
+              <div className="flex gap-2">
+                {(["day", "swing"] as const).map((style) => (
+                  <button
+                    key={style}
+                    type="button"
+                    onClick={() => setTradingStyle(style)}
+                    className={`flex-1 rounded-lg py-2 text-xs capitalize ${
+                      tradingStyle === style
+                        ? "bg-[var(--accent)]/20 text-[var(--accent)]"
+                        : "bg-white/5 text-[var(--muted)]"
+                    }`}
+                  >
+                    {style}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section className="rounded-xl border border-[var(--card-border)] bg-[var(--card)] p-6">
           <h2 className="mb-4 text-lg font-medium">Risk Management</h2>
           <div className="space-y-4">
