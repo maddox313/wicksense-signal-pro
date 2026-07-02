@@ -53,7 +53,7 @@ export interface Trade {
   signalId?: string;
   stopLossPrice?: number;
   takeProfitPrice?: number;
-  closeReason?: "TAKE_PROFIT" | "STOP_LOSS" | "SESSION_END";
+  closeReason?: TradeCloseReason;
   outcome?: "win" | "loss";
   alpacaOrderId?: string;
   alpacaStopOrderId?: string;

@@ -91,6 +91,22 @@ export function isPastUsEquityPostMarketClose(date: Date = new Date()): boolean 
   return minutes >= POST_MARKET_END;
 }
 
+/** True when entry and current time fall on different Eastern calendar days. */
+export function isOvernightDayTrade(entryTime: number, date: Date = new Date()): boolean {
+  return getEasternDayKey(new Date(entryTime)) !== getEasternDayKey(date);
+}
+
+/**
+ * Day trades must not span sessions unattended.
+ * Force flat when: overnight, past 8 PM ET, or in the last 5 minutes of RTH.
+ */
+export function shouldForceFlatDayTrade(entryTime: number, date: Date = new Date()): boolean {
+  if (isOvernightDayTrade(entryTime, date)) return true;
+  if (isPastUsEquityPostMarketClose(date)) return true;
+  if (isNearUsEquitySessionEnd(date)) return true;
+  return false;
+}
+
 /**
  * Whether closed trades should be auto-archived for the current Eastern calendar day.
  * Runs once per day after post-market close (8 PM ET), or on the next morning if missed.

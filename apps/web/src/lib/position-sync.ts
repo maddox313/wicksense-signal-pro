@@ -35,6 +35,8 @@ import {
   getOpenTrades,
   upsertTrade,
 } from "@/lib/trade-store";
+import { ensureTradeExitLevels } from "@/lib/auto-exit-levels";
+import { verifyCloseReasonFromFill } from "@/lib/trade-close-reason";
 import { isLegacyPaperBlockSymbol } from "@/lib/legacy-paper-cleanup";
 
 export interface PositionSyncResult {
@@ -48,17 +50,26 @@ export interface PositionSyncResult {
 }
 
 async function closeTradeAtPrice(trade: Trade, exitPrice: number, reason: string) {
-  const pnl = computeClosePnl(trade, exitPrice);
+  const enriched = await ensureTradeExitLevels(trade);
+  const pnl = computeClosePnl(enriched, exitPrice);
   const slot = trade.chartSlot ?? ALPACA_SYNC_SLOT;
   getRiskEngine(slot, DEFAULT_RISK_SETTINGS).recordTradeResult(pnl);
 
+  const { closeReason, outcome } = verifyCloseReasonFromFill({
+    trade: enriched,
+    exitPrice,
+    trigger: "ALPACA_SYNC",
+  });
+
   await upsertTrade({
-    ...trade,
+    ...enriched,
     exitPrice,
     exitTime: Date.now(),
     pnl,
-    pnlPercent: computeClosePnlPercent(trade, pnl),
+    pnlPercent: computeClosePnlPercent(enriched, pnl),
     status: "closed",
+    closeReason,
+    outcome,
     strategy: isAccountSyncTrade(trade) ? `closed:${reason}` : trade.strategy,
   });
 }

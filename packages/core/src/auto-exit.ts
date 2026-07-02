@@ -3,6 +3,26 @@ import type { Trade, TradeSide, TradingStyle } from "./types";
 export type AutoExitCloseReason = "TAKE_PROFIT" | "STOP_LOSS" | "SESSION_END";
 export type TradeOutcome = "win" | "loss";
 
+/** Verified exit reason persisted on closed trades (fill price is source of truth for TP/SL). */
+export type TradeCloseReason =
+  | "TAKE_PROFIT"
+  | "STOP_LOSS"
+  | "TIME_EXIT"
+  | "SIGNAL_SELL"
+  | "MANUAL"
+  | "ALPACA_SYNC"
+  | "SAFETY_EXIT"
+  | "MARKET_EXIT";
+
+/** Why a close was initiated before fill-price verification. */
+export type ExitTriggerContext =
+  | "AUTO_MONITOR"
+  | "TIME_EXIT"
+  | "SIGNAL_SELL"
+  | "MANUAL"
+  | "ALPACA_SYNC"
+  | "SAFETY_EXIT";
+
 export interface StyleExitPercents {
   stopLossPercent: number;
   takeProfitPercent: number;
@@ -67,6 +87,66 @@ export function evaluateAutoExit(
 
 export function deriveTradeOutcome(pnl: number): TradeOutcome {
   return pnl >= 0 ? "win" : "loss";
+}
+
+/**
+ * Classify exit from actual fill price vs configured levels.
+ * TP/SL are only returned when the fill price actually reached the level.
+ */
+export function classifyExitFromFillPrice(
+  side: TradeSide,
+  exitPrice: number,
+  stopLoss: number,
+  takeProfit: number
+): "TAKE_PROFIT" | "STOP_LOSS" | null {
+  return evaluateAutoExit(side, exitPrice, stopLoss, takeProfit);
+}
+
+/**
+ * Resolve the persisted close reason: fill price wins for TP/SL;
+ * otherwise fall back to the trigger context (signal sell, sync, etc.).
+ */
+export function resolveVerifiedCloseReason(params: {
+  side: TradeSide;
+  exitPrice: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  trigger: ExitTriggerContext;
+}): TradeCloseReason {
+  const { side, exitPrice, stopLoss, takeProfit, trigger } = params;
+
+  if (
+    typeof stopLoss === "number" &&
+    typeof takeProfit === "number" &&
+    stopLoss > 0 &&
+    takeProfit > 0
+  ) {
+    const levelHit = classifyExitFromFillPrice(side, exitPrice, stopLoss, takeProfit);
+    if (levelHit) return levelHit;
+  }
+
+  switch (trigger) {
+    case "TIME_EXIT":
+      return "TIME_EXIT";
+    case "SIGNAL_SELL":
+      return "SIGNAL_SELL";
+    case "MANUAL":
+      return "MANUAL";
+    case "ALPACA_SYNC":
+      return "ALPACA_SYNC";
+    case "SAFETY_EXIT":
+      return "SAFETY_EXIT";
+    case "AUTO_MONITOR":
+    default:
+      return "MARKET_EXIT";
+  }
+}
+
+export function exitTriggerFromAutoExitHint(
+  hint?: AutoExitCloseReason | null
+): ExitTriggerContext {
+  if (hint === "SESSION_END") return "TIME_EXIT";
+  return "AUTO_MONITOR";
 }
 
 export function isAutoExitMonitoredTrade(trade: Trade): boolean {

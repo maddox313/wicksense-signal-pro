@@ -9,7 +9,7 @@ import type { RiskSettings, AlertSettings, Trade, TradeMode } from "@wicksense/c
 import {
   placeOrderWithFill,
   resolveAccountEquity,
-  placeLiveStopLossOrder,
+  placeBrokerStopLossOrder,
   cancelOpenExitOrdersForSymbol,
   CLOSE_ORDER_FILL_OPTIONS,
   ENTRY_ORDER_FILL_OPTIONS,
@@ -21,7 +21,6 @@ import { logDuplicateSignalBlocked } from "@/lib/signal-dedupe-log";
 import { getUserContact, loadUserProfile } from "@/lib/user-config";
 import { saveStrategyAttribution } from "@/lib/strategy-attribution";
 import {
-  loadLiveTradingSettings,
   computeStopLossPrice,
 } from "@/lib/live-trading-config";
 import { resolveExitPercentsForChartSlot } from "@/lib/trade-exit-settings";
@@ -44,6 +43,8 @@ import { loadTradingScheduleSettings } from "@/lib/trading-schedule-config";
 import { shouldSendExtendedHoursOrders, isRegularUsEquitySession } from "@wicksense/core";
 import { getTradingScheduleStatus } from "@/lib/trading-schedule-guard";
 import { isLegacyPaperBlockSymbol } from "@/lib/legacy-paper-cleanup";
+import { ensureTradeExitLevels } from "@/lib/auto-exit-levels";
+import { verifyCloseReasonFromFill } from "@/lib/trade-close-reason";
 
 function getEngine(chartSlot: string, settings: RiskSettings) {
   return getRiskEngine(chartSlot, settings);
@@ -211,6 +212,33 @@ export async function POST(req: NextRequest) {
 
     const closedBasis = { ...openBuy, quantity: closedQty };
     const pnl = computeClosePnl(closedBasis, exitPrice);
+    const tradeWithLevels = await ensureTradeExitLevels(openBuy);
+    const { closeReason, outcome } = verifyCloseReasonFromFill({
+      trade: tradeWithLevels,
+      exitPrice,
+      trigger: "SIGNAL_SELL",
+    });
+
+    const distToTp =
+      tradeWithLevels.takeProfitPrice != null
+        ? openBuy.side === "buy"
+          ? ((tradeWithLevels.takeProfitPrice - exitPrice) / openBuy.entryPrice) * 100
+          : ((exitPrice - tradeWithLevels.takeProfitPrice) / openBuy.entryPrice) * 100
+        : null;
+
+    if (closeReason === "SIGNAL_SELL" && distToTp != null && distToTp > 0) {
+      console.log("[execute] Signal sell before TP", {
+        symbol,
+        chartSlot,
+        strategy,
+        entryPrice: openBuy.entryPrice,
+        exitPrice,
+        configuredTp: tradeWithLevels.takeProfitPrice,
+        pctBelowTp: distToTp.toFixed(3),
+        signalReason,
+      });
+    }
+
     const closed: Trade = {
       ...openBuy,
       quantity: closedQty,
@@ -219,6 +247,10 @@ export async function POST(req: NextRequest) {
       pnl,
       pnlPercent: computeClosePnlPercent(closedBasis, pnl),
       status: "closed",
+      closeReason,
+      outcome,
+      stopLossPrice: tradeWithLevels.stopLossPrice,
+      takeProfitPrice: tradeWithLevels.takeProfitPrice,
     };
     await upsertTrade(closed);
     engine.recordTradeResult(pnl);
@@ -322,7 +354,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const liveSettings = loadLiveTradingSettings();
   const exitPercents = resolveExitPercentsForChartSlot(chartSlot);
   let stopLoss = computeStopLossPrice(price, exitPercents.stopLossPercent);
   const { quantity } = engine.calculatePositionSize(accountEquity, price, stopLoss);
@@ -335,6 +366,22 @@ export async function POST(req: NextRequest) {
   let entryPrice = price;
   let filledQty = quantity;
   const allowExtendedHours = scheduleAllowsExtendedHours();
+
+  async function attachBrokerStopLoss(
+    paper: boolean,
+    qty: number,
+    entry: number
+  ): Promise<void> {
+    const stopPrice = computeStopLossPrice(entry, exitPercents.stopLossPercent);
+    const stopOrder = await placeBrokerStopLossOrder({
+      symbol,
+      qty,
+      stopPrice,
+      paper,
+    });
+    alpacaStopOrderId = stopOrder?.id;
+    stopLoss = stopPrice;
+  }
 
   if (mode === "live") {
     try {
@@ -350,26 +397,18 @@ export async function POST(req: NextRequest) {
       entryPrice = fill.filledAvgPrice;
       filledQty = fill.filledQty;
 
-      if (liveSettings.brokerStopLossEnabled) {
-        stopLoss = computeStopLossPrice(entryPrice, exitPercents.stopLossPercent);
-        try {
-          const stopOrder = await placeLiveStopLossOrder({
-            symbol,
-            qty: filledQty,
-            stopPrice: stopLoss,
-          });
-          alpacaStopOrderId = stopOrder?.id;
-        } catch (stopErr) {
-          console.error("[execute] Live stop-loss placement failed:", stopErr);
-          return NextResponse.json(
-            {
-              error: `Buy filled but stop-loss failed: ${String(stopErr)}`,
-              partial: true,
-              alpacaOrderId,
-            },
-            { status: 500 }
-          );
-        }
+      try {
+        await attachBrokerStopLoss(false, filledQty, entryPrice);
+      } catch (stopErr) {
+        console.error("[execute] Live stop-loss placement failed:", stopErr);
+        return NextResponse.json(
+          {
+            error: `Buy filled but stop-loss failed: ${String(stopErr)}`,
+            partial: true,
+            alpacaOrderId,
+          },
+          { status: 500 }
+        );
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -394,6 +433,20 @@ export async function POST(req: NextRequest) {
       alpacaOrderId = fill.orderId;
       entryPrice = fill.filledAvgPrice;
       filledQty = fill.filledQty;
+
+      try {
+        await attachBrokerStopLoss(true, filledQty, entryPrice);
+      } catch (stopErr) {
+        console.error("[execute] Paper stop-loss placement failed:", stopErr);
+        return NextResponse.json(
+          {
+            error: `Buy filled but broker stop-loss failed: ${String(stopErr)}`,
+            partial: true,
+            alpacaOrderId,
+          },
+          { status: 500 }
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (isRetryableFillFailure(message)) {
@@ -453,8 +506,8 @@ export async function POST(req: NextRequest) {
   }
 
   const stopNote =
-    mode === "live" && liveSettings.brokerStopLossEnabled
-      ? ` · Stop @ $${stopLoss.toFixed(2)}`
+    isAlpacaMode(mode) && alpacaStopOrderId
+      ? ` · Broker stop @ $${stopLoss.toFixed(2)}`
       : "";
 
   const alertResults = await sendAlert(
@@ -472,8 +525,7 @@ export async function POST(req: NextRequest) {
       mode,
       timestamp: Date.now(),
       reason: signalReason,
-      stopLossPrice:
-        mode === "live" && liveSettings.brokerStopLossEnabled ? stopLoss : undefined,
+      stopLossPrice: isAlpacaMode(mode) ? stopLoss : undefined,
     } satisfies TradeAlertDetails
   );
 

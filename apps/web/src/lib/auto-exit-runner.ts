@@ -1,7 +1,7 @@
 import {
   computePerformanceStats,
   evaluateAutoExit,
-  isNearUsEquitySessionEnd,
+  shouldForceFlatDayTrade,
   DEFAULT_RISK_SETTINGS,
   type AutoExitCloseReason,
   type RiskSettings,
@@ -71,16 +71,27 @@ export async function runAutoExitMonitor(
       trade.takeProfitPrice
     );
 
-    // Force flat day trades in the last 5 minutes of RTH — avoids overnight stop slippage.
-    if (
-      !closeReason &&
-      resolveTradingStyleForTrade(trade) === "day" &&
-      isNearUsEquitySessionEnd()
-    ) {
+    const isDayTrade = resolveTradingStyleForTrade(trade) === "day";
+    const forceFlat =
+      isDayTrade && shouldForceFlatDayTrade(trade.entryTime);
+
+    // Force flat day trades after 8 PM ET, overnight, or last 5 min RTH.
+    if (!closeReason && forceFlat) {
       closeReason = "SESSION_END";
     }
 
     if (!closeReason) continue;
+
+    if (forceFlat && closeReason === "SESSION_END") {
+      console.log("[auto-exit] Force-flat day trade (overnight/session guard)", {
+        tradeId: trade.id,
+        symbol: trade.symbol,
+        entryTime: trade.entryTime,
+        currentPrice,
+        stopLoss: trade.stopLossPrice,
+        takeProfit: trade.takeProfitPrice,
+      });
+    }
 
     exitInFlight.add(trade.id);
     try {
@@ -97,23 +108,23 @@ export async function runAutoExitMonitor(
 
       const result = await closeTradeRecord({
         trade,
-        closeReason,
+        closeReason: closeReason ?? undefined,
+        closeTrigger:
+          closeReason === "SESSION_END" ? "TIME_EXIT" : "AUTO_MONITOR",
         riskSettings: effectiveRisk,
       });
       closed.push(result);
 
-      const alertType =
-        closeReason === "STOP_LOSS"
-          ? "stop_loss"
-          : closeReason === "SESSION_END"
-            ? "sell"
-            : "sell";
+      const verified = result.closeReason ?? "MARKET_EXIT";
+      const alertType = verified === "STOP_LOSS" ? "stop_loss" : "sell";
       const label =
-        closeReason === "STOP_LOSS"
+        verified === "STOP_LOSS"
           ? "STOP LOSS"
-          : closeReason === "SESSION_END"
-            ? "SESSION END FLAT"
-            : "TAKE PROFIT";
+          : verified === "TAKE_PROFIT"
+            ? "TAKE PROFIT"
+            : verified === "TIME_EXIT"
+              ? "SESSION END FLAT"
+              : "MARKET EXIT";
       await sendAlert(
         "default",
         alertType,
@@ -128,7 +139,7 @@ export async function runAutoExitMonitor(
           timeframe: result.timeframe,
           mode: result.mode,
           timestamp: Date.now(),
-          reason: closeReason,
+          reason: verified,
         }
       );
     } catch (err) {

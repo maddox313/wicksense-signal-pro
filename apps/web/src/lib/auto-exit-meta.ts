@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import type { AutoExitCloseReason, Trade, TradeOutcome } from "@wicksense/core";
+import type { Trade, TradeCloseReason, TradeOutcome } from "@wicksense/core";
 
 import { dataFile } from "@/lib/data-paths";
 
@@ -8,7 +8,7 @@ const META_PATH = dataFile("auto-exit-meta.local.json");
 
 export interface AutoExitMeta {
   takeProfitPrice: number;
-  closeReason?: AutoExitCloseReason;
+  closeReason?: TradeCloseReason;
   outcome?: TradeOutcome;
 }
 

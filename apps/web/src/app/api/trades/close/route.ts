@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
       quantity: trade.quantity,
     });
 
-    const closed = await closeTradeRecord({ trade, riskSettings });
+    const closed = await closeTradeRecord({ trade, riskSettings, closeTrigger: "MANUAL" });
     const trades = await getAllTrades();
     const engine = getRiskEngine(slot, riskSettings);
 

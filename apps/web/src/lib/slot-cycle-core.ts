@@ -265,6 +265,25 @@ export async function runSlotCycleWithContext(
         });
         return;
       }
+
+      // Day scalp: exits are managed by auto-exit TP/SL — opposing sell signals fire too early.
+      if (autoTradeEnabled && tradingStyle === "day") {
+        rejectSignal("Day scalp exits via auto-exit TP/SL only");
+        recordScan({
+          chartSlot: slotId,
+          symbol,
+          timeframe,
+          barCount: bars.length,
+          presetId: activePreset.id,
+          presetStrategies: activePreset.strategies,
+          barSignalCount: barSignals.length,
+          strategiesFired,
+          pickedStrategy: signal.strategy,
+          outcome: "signal_seen",
+          detail: `Strategy sell ignored (${signal.reason}) — waiting for TP/SL auto-exit`,
+        });
+        return;
+      }
     }
 
     if (hasActiveTradeForSignal(trades, slotId, signal.id)) {

@@ -512,17 +512,18 @@ export async function cancelOpenExitOrdersForSymbol(
   return cancelled;
 }
 
-/** Broker-side stop-loss sell order — live account only. */
-export async function placeLiveStopLossOrder(params: {
+/** Broker-side GTC stop-loss sell order (paper or live). */
+export async function placeBrokerStopLossOrder(params: {
   symbol: string;
   qty: number;
   stopPrice: number;
+  paper: boolean;
 }): Promise<AlpacaOrder> {
-  const creds = getLiveCredentials();
+  const creds = params.paper ? getPaperCredentials() : getLiveCredentials();
   if (!creds.apiKey || !creds.secretKey) {
-    throw new Error("Live Alpaca credentials not configured");
+    throw new Error(`${params.paper ? "Paper" : "Live"} Alpaca credentials not configured`);
   }
-  const res = await fetch(`${ALPACA_LIVE_URL}/v2/orders`, {
+  const res = await fetch(`${getTradingUrl(params.paper)}/v2/orders`, {
     method: "POST",
     headers: { ...getHeaders(creds), "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -539,6 +540,15 @@ export async function placeLiveStopLossOrder(params: {
     throw new Error(`Stop-loss order failed: ${err}`);
   }
   return res.json();
+}
+
+/** @deprecated Use placeBrokerStopLossOrder */
+export async function placeLiveStopLossOrder(params: {
+  symbol: string;
+  qty: number;
+  stopPrice: number;
+}): Promise<AlpacaOrder> {
+  return placeBrokerStopLossOrder({ ...params, paper: false });
 }
 
 /** Cancel every open order on paper or live (used for legacy cleanup). */

@@ -4,7 +4,9 @@ import { DEFAULT_TRADING_SCHEDULE } from "./types.ts";
 import {
   evaluateTradingSchedule,
   getEasternDayKey,
+  isOvernightDayTrade,
   normalizeTradingSchedule,
+  shouldForceFlatDayTrade,
   shouldRunEndOfDayTradeArchive,
 } from "./trading-schedule.ts";
 
@@ -76,5 +78,20 @@ describe("shouldRunEndOfDayTradeArchive", () => {
     const morning = new Date("2026-07-02T13:00:00Z"); // 9:00 AM ET July 2
     assert.equal(shouldRunEndOfDayTradeArchive("2026-07-01", morning), true);
     assert.equal(shouldRunEndOfDayTradeArchive("2026-07-02", morning), false);
+  });
+});
+
+describe("day trade session guards", () => {
+  it("detects overnight holds across Eastern calendar days", () => {
+    const entry = new Date("2026-07-01T21:18:18.711Z").getTime(); // 5:18 PM ET
+    const nextMorning = new Date("2026-07-02T14:59:11.615Z"); // 10:59 AM ET next day
+    assert.equal(isOvernightDayTrade(entry, nextMorning), true);
+    assert.equal(shouldForceFlatDayTrade(entry, nextMorning), true);
+  });
+
+  it("requires force-flat after 8 PM ET same day", () => {
+    const entry = new Date("2026-07-01T21:18:18.711Z").getTime();
+    const sameNight = new Date("2026-07-02T00:30:00Z"); // 8:30 PM ET July 1
+    assert.equal(shouldForceFlatDayTrade(entry, sameNight), true);
   });
 });
