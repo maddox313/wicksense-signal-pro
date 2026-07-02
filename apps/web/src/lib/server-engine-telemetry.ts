@@ -122,6 +122,51 @@ export function clearServerDetectError(): void {
   saveServerEngineTelemetry(state);
 }
 
+export function recordServerScheduleBlocked(chartSlots: string[]): void {
+  const state = loadServerEngineTelemetry();
+  const at = Date.now();
+  const blockedScans: SlotScanRecord[] = chartSlots.map((chartSlot) => ({
+    at,
+    chartSlot,
+    symbol: "—",
+    timeframe: "—",
+    barCount: 0,
+    presetId: null,
+    presetStrategies: [],
+    barSignalCount: 0,
+    strategiesFired: [],
+    pickedStrategy: null,
+    outcome: "schedule_blocked",
+    detail: "Outside allowed trading hours",
+  }));
+
+  if (blockedScans.length === 0) {
+    blockedScans.push({
+      at,
+      chartSlot: "engine",
+      symbol: "—",
+      timeframe: "—",
+      barCount: 0,
+      presetId: null,
+      presetStrategies: [],
+      barSignalCount: 0,
+      strategiesFired: [],
+      pickedStrategy: null,
+      outcome: "schedule_blocked",
+      detail: "Outside allowed trading hours",
+    });
+  }
+
+  for (const scan of blockedScans) {
+    state.lastSlotScans = [
+      scan,
+      ...state.lastSlotScans.filter((s) => s.chartSlot !== scan.chartSlot),
+    ].slice(0, 8);
+  }
+
+  saveServerEngineTelemetry(state);
+}
+
 export function isServerEngineCurrentlyRunning(): boolean {
   const state = loadServerEngineTelemetry();
   if (state.cycleInProgress) return true;

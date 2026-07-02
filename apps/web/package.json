@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "npx prisma db push && node --max-old-space-size=4096 ./node_modules/next/dist/bin/next dev",
+    "dev": "npx prisma db push && npx prisma generate && node --max-old-space-size=4096 ./node_modules/next/dist/bin/next dev",
     "build": "npx prisma generate && npm rebuild lightningcss @tailwindcss/oxide && next build",
     "start": "next start",
     "start:prod": "npx prisma db push && node scripts/start-prod.mjs",

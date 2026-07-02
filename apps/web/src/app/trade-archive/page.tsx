@@ -246,7 +246,7 @@ export default function TradeArchivePage() {
           emptyMessage={
             loadingTrades
               ? "Loading archived trades…"
-              : `No archived trades for ${selectedLabel}. Archive closed trades from Trade Analysis.`
+              : `No archived trades for ${selectedLabel}. Closed trades appear here automatically after 8:00 PM ET each day.`
           }
         />
       </div>

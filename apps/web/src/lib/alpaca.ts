@@ -1,5 +1,9 @@
 import type { OHLCV } from "@wicksense/core";
 import {
+  alpacaExtendedHoursTimeInForce,
+  isExtendedUsEquitySession,
+} from "@wicksense/core";
+import {
   getBrokerCredentials,
   getPaperCredentials,
   getLiveCredentials,
@@ -226,6 +230,39 @@ export async function getAccount() {
   return result.account;
 }
 
+function roundLimitPrice(price: number): number {
+  return price >= 1 ? Math.round(price * 100) / 100 : Math.round(price * 10000) / 10000;
+}
+
+function parseQuotePrice(value: unknown): number | null {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+async function resolveExtendedHoursLimitPrice(
+  symbol: string,
+  side: "buy" | "sell"
+): Promise<number> {
+  const q = await fetchQuote(symbol);
+  const raw = (q as { quote?: { ap?: unknown; bp?: unknown } })?.quote;
+  const ask = parseQuotePrice(raw?.ap);
+  const bid = parseQuotePrice(raw?.bp);
+
+  if (side === "buy") {
+    const base = ask ?? bid;
+    if (base == null) {
+      throw new Error(`No quote available for ${symbol}`);
+    }
+    return roundLimitPrice(base * 1.001);
+  }
+
+  const base = bid ?? ask;
+  if (base == null) {
+    throw new Error(`No quote available for ${symbol}`);
+  }
+  return roundLimitPrice(base * 0.999);
+}
+
 export async function placeOrder(params: {
   symbol: string;
   qty: number;
@@ -237,15 +274,30 @@ export async function placeOrder(params: {
 }) {
   const usePaper = params.paper ?? getBrokerCredentials().paper;
   const creds = usePaper ? getPaperCredentials() : getLiveCredentials();
+  const inExtendedSession = isExtendedUsEquitySession();
+
+  let orderType = params.type ?? "market";
+  let limitPrice = params.limit_price;
+
+  // Alpaca rejects market orders outside regular hours — always use limit + extended_hours then.
+  if (inExtendedSession) {
+    orderType = "limit";
+    if (!Number.isFinite(limitPrice) || (limitPrice ?? 0) <= 0) {
+      limitPrice = await resolveExtendedHoursLimitPrice(params.symbol, params.side);
+    }
+  }
+
   const body: Record<string, unknown> = {
     symbol: params.symbol,
     qty: params.qty,
     side: params.side,
-    type: params.type ?? "market",
-    time_in_force: "day",
-    limit_price: params.limit_price,
+    type: orderType,
+    time_in_force: inExtendedSession ? alpacaExtendedHoursTimeInForce() : "day",
   };
-  if (params.extended_hours) {
+  if (orderType === "limit" && Number.isFinite(limitPrice) && (limitPrice ?? 0) > 0) {
+    body.limit_price = formatOrderPrice(limitPrice!);
+  }
+  if (inExtendedSession) {
     body.extended_hours = true;
   }
   const res = await fetch(`${getTradingUrl(usePaper)}/v2/orders`, {
@@ -255,6 +307,14 @@ export async function placeOrder(params: {
   });
   if (!res.ok) {
     const err = await res.text();
+    if (process.env.NODE_ENV === "development") {
+      console.warn("[alpaca] order rejected", {
+        symbol: params.symbol,
+        side: params.side,
+        body,
+        err,
+      });
+    }
     throw new Error(`Order failed: ${err}`);
   }
   return res.json();

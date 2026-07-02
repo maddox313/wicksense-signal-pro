@@ -1,15 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   computeTodayPerformanceStats,
   computeTradeAnalysisStats,
-  isAutoExitMonitoredTrade,
   type PerformanceStats,
   type Trade,
 } from "@wicksense/core";
-import { useAppStore } from "@/lib/store";
+import { useAppStore, type AutoExitMonitorStatus } from "@/lib/store";
 import {
   UNREALIZED_PNL_TOOLTIP,
   type ModeUnrealizedPnlSnapshot,
@@ -34,6 +33,7 @@ export default function PerformancePage() {
     setConsecutiveLosses,
     clearMarkers,
     clearMultiChartMarkers,
+    setAutoExitStatus,
   } = useAppStore();
   const [clearing, setClearing] = useState(false);
   const [clearMessage, setClearMessage] = useState<string | null>(null);
@@ -51,11 +51,30 @@ export default function PerformancePage() {
   const liveTodayStats = computeTodayPerformanceStats(liveTrades);
 
   const paperClosedCount = paperTrades.filter((t) => t.status === "closed").length;
-  const autoExitOn = autoTradeEnabled || multiChartSlots.some((slot) => slot.autoTradeEnabled);
+  const clientAutoOn =
+    autoTradeEnabled || multiChartSlots.some((slot) => slot.autoTradeEnabled);
+  const autoExitOn = autoExitStatus.enabled || clientAutoOn;
+  const openPaperOrLive = trades.filter(
+    (t) => t.status === "open" && (t.mode === "paper" || t.mode === "live")
+  ).length;
   const monitoredOpenTrades =
-    autoExitStatus.monitoredCount > 0
-      ? autoExitStatus.monitoredCount
-      : trades.filter(isAutoExitMonitoredTrade).length;
+    autoExitStatus.monitoredCount > 0 ? autoExitStatus.monitoredCount : openPaperOrLive;
+
+  useEffect(() => {
+    const pollEngineStatus = async () => {
+      try {
+        const res = await fetch("/api/trades/engine-status");
+        if (!res.ok) return;
+        const data = (await res.json()) as { autoExitStatus?: AutoExitMonitorStatus };
+        if (data.autoExitStatus) {
+          setAutoExitStatus(data.autoExitStatus);
+        }
+      } catch {
+        /* non-blocking */
+      }
+    };
+    void pollEngineStatus();
+  }, [setAutoExitStatus]);
 
   const applyTradeUpdate = (data: { trades?: typeof trades; performance?: ReturnType<typeof computeTradeAnalysisStats> }) => {
     setTrades(data.trades ?? []);
@@ -213,7 +232,9 @@ export default function PerformancePage() {
       <header className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold">Trade Analysis</h1>
-          <p className="text-sm text-[var(--muted)]">Paper and live trade history by account type</p>
+          <p className="text-sm text-[var(--muted)]">
+            Paper and live trade history by account type. Closed trades auto-archive to Trade Archive after 8:00 PM ET.
+          </p>
           {autoExitOn && (
             <p className="mt-1 text-xs text-[var(--accent)]">
               Auto Exit: ON · Monitoring {monitoredOpenTrades} open trade

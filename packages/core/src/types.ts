@@ -53,7 +53,7 @@ export interface Trade {
   signalId?: string;
   stopLossPrice?: number;
   takeProfitPrice?: number;
-  closeReason?: "TAKE_PROFIT" | "STOP_LOSS";
+  closeReason?: "TAKE_PROFIT" | "STOP_LOSS" | "SESSION_END";
   outcome?: "win" | "loss";
   alpacaOrderId?: string;
   alpacaStopOrderId?: string;
@@ -151,10 +151,10 @@ export interface BacktestResult {
 export const DEFAULT_RISK_SETTINGS: RiskSettings = {
   maxConsecutiveLosses: 3,
   positionSizeMinPercent: 1,
-  positionSizeMaxPercent: 5,
+  positionSizeMaxPercent: 4,
   riskPercentMin: 0.5,
-  riskPercentMax: 2,
-  maxOpenPositions: 5,
+  riskPercentMax: 1.5,
+  maxOpenPositions: 3,
 };
 
 export const DEFAULT_ALERT_SETTINGS: AlertSettings = {
@@ -172,8 +172,8 @@ export const DEFAULT_ALERT_SETTINGS: AlertSettings = {
 
 export const DEFAULT_LIVE_TRADING_SETTINGS: LiveTradingSettings = {
   brokerStopLossEnabled: true,
-  stopLossPercent: 2,
-  takeProfitPercent: 4,
+  stopLossPercent: 1,
+  takeProfitPercent: 2,
 };
 
 export type WeekdayKey = "sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat";

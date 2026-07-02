@@ -1,7 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_TRADING_SCHEDULE } from "./types.ts";
-import { evaluateTradingSchedule, normalizeTradingSchedule } from "./trading-schedule.ts";
+import {
+  evaluateTradingSchedule,
+  getEasternDayKey,
+  normalizeTradingSchedule,
+  shouldRunEndOfDayTradeArchive,
+} from "./trading-schedule.ts";
 
 describe("evaluateTradingSchedule", () => {
   it("allows all times when unrestricted", () => {
@@ -23,6 +28,10 @@ describe("evaluateTradingSchedule", () => {
     const mondayNight = new Date("2026-06-23T02:00:00Z"); // 22:00 ET Monday
 
     assert.equal(evaluateTradingSchedule(settings, mondayMorning).allowed, true);
+    const mondayPremarket = new Date("2026-06-22T13:15:00Z"); // 09:15 ET Monday
+    assert.equal(evaluateTradingSchedule(settings, mondayPremarket).allowed, false);
+    const monday4pm = new Date("2026-06-22T20:00:00Z"); // 16:00 ET Monday
+    assert.equal(evaluateTradingSchedule(settings, monday4pm).allowed, false);
     assert.equal(evaluateTradingSchedule(settings, mondayNight).allowed, false);
   });
 
@@ -46,5 +55,26 @@ describe("evaluateTradingSchedule", () => {
     });
     const overnight = new Date("2026-06-23T02:00:00Z"); // 22:00 ET Monday
     assert.equal(evaluateTradingSchedule(settings, overnight).allowed, true);
+  });
+});
+
+describe("shouldRunEndOfDayTradeArchive", () => {
+  it("does not archive during the trading day", () => {
+    const afternoon = new Date("2026-07-01T18:30:00Z"); // 2:30 PM ET
+    assert.equal(shouldRunEndOfDayTradeArchive(undefined, afternoon), false);
+    assert.equal(shouldRunEndOfDayTradeArchive("2026-07-01", afternoon), false);
+  });
+
+  it("archives after post-market close", () => {
+    const evening = new Date("2026-07-02T00:30:00Z"); // 8:30 PM ET July 1
+    assert.equal(getEasternDayKey(evening), "2026-07-01");
+    assert.equal(shouldRunEndOfDayTradeArchive(undefined, evening), true);
+    assert.equal(shouldRunEndOfDayTradeArchive("2026-07-01", evening), false);
+  });
+
+  it("catches up the next morning if the prior evening run was missed", () => {
+    const morning = new Date("2026-07-02T13:00:00Z"); // 9:00 AM ET July 2
+    assert.equal(shouldRunEndOfDayTradeArchive("2026-07-01", morning), true);
+    assert.equal(shouldRunEndOfDayTradeArchive("2026-07-02", morning), false);
   });
 });

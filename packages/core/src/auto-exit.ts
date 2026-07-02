@@ -1,7 +1,22 @@
-import type { Trade, TradeSide } from "./types";
+import type { Trade, TradeSide, TradingStyle } from "./types";
 
-export type AutoExitCloseReason = "TAKE_PROFIT" | "STOP_LOSS";
+export type AutoExitCloseReason = "TAKE_PROFIT" | "STOP_LOSS" | "SESSION_END";
 export type TradeOutcome = "win" | "loss";
+
+export interface StyleExitPercents {
+  stopLossPercent: number;
+  takeProfitPercent: number;
+}
+
+/** Day = tight scalp (1.5% TP / 1% SL). Swing = wider targets. */
+export const EXIT_PERCENTS_BY_TRADING_STYLE: Record<TradingStyle, StyleExitPercents> = {
+  day: { takeProfitPercent: 1.5, stopLossPercent: 1 },
+  swing: { takeProfitPercent: 3, stopLossPercent: 1.5 },
+};
+
+export function getExitPercentsForTradingStyle(tradingStyle: TradingStyle): StyleExitPercents {
+  return EXIT_PERCENTS_BY_TRADING_STYLE[tradingStyle];
+}
 
 export function roundPrice(raw: number, entryPrice: number): number {
   return entryPrice >= 1 ? Math.round(raw * 100) / 100 : Math.round(raw * 10000) / 10000;

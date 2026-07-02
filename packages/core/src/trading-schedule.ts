@@ -25,6 +25,100 @@ export interface TradingScheduleEvaluation {
   reason?: string;
 }
 
+function isWeekday(weekdayKey: WeekdayKey): boolean {
+  return weekdayKey !== "sun" && weekdayKey !== "sat";
+}
+
+/** Last 5 minutes of regular session — force flat day trades before the close. */
+export function isNearUsEquitySessionEnd(date: Date = new Date(), leadMinutes = 5): boolean {
+  const { weekdayKey, minutes } = getEasternParts(date);
+  if (!isWeekday(weekdayKey)) return false;
+  const flatStart = POST_MARKET_START - leadMinutes;
+  return minutes >= flatStart && minutes < POST_MARKET_START;
+}
+
+/** US regular session: Mon–Fri 9:30 AM – 4:00 PM Eastern. */
+export function isRegularUsEquitySession(date: Date = new Date()): boolean {
+  const { weekdayKey, minutes } = getEasternParts(date);
+  if (!isWeekday(weekdayKey)) return false;
+  return minutes >= PRE_MARKET_END && minutes < POST_MARKET_START;
+}
+
+/** Pre-market, after-hours, or overnight (not regular RTH). */
+export function isExtendedUsEquitySession(date: Date = new Date()): boolean {
+  const { weekdayKey, minutes } = getEasternParts(date);
+  if (isRegularUsEquitySession(date)) return false;
+
+  if (isWeekday(weekdayKey)) {
+    if (isBetween(minutes, PRE_MARKET_START, PRE_MARKET_END - 1)) return true;
+    if (isBetween(minutes, POST_MARKET_START, POST_MARKET_END)) return true;
+  }
+
+  if (isBetween(minutes, OVERNIGHT_START, 24 * 60 - 1)) return true;
+  if (isBetween(minutes, 0, OVERNIGHT_END)) return true;
+
+  return false;
+}
+
+/**
+ * Alpaca extended_hours flag — only when outside regular hours and schedule allows it.
+ * Unrestricted allows trading anytime but still uses market orders during RTH.
+ */
+export function shouldSendExtendedHoursOrders(
+  settings: TradingScheduleSettings,
+  date: Date = new Date()
+): boolean {
+  if (!isExtendedUsEquitySession(date)) {
+    return false;
+  }
+  return settings.unrestricted || settings.allowAfterHours || settings.allowOvernight;
+}
+
+/** 8:00 PM – 4:00 AM Eastern (overnight session). */
+export function isOvernightUsEquitySession(date: Date = new Date()): boolean {
+  const { minutes } = getEasternParts(date);
+  return isBetween(minutes, OVERNIGHT_START, 24 * 60 - 1) || isBetween(minutes, 0, OVERNIGHT_END);
+}
+
+/** Alpaca extended-hours TIF: overnight prefers GTC; pre/after-market uses DAY. */
+export function alpacaExtendedHoursTimeInForce(date: Date = new Date()): "day" | "gtc" {
+  return isOvernightUsEquitySession(date) ? "gtc" : "day";
+}
+
+/** After 8:00 PM Eastern — post-market close, end of the US equity trading day. */
+export function isPastUsEquityPostMarketClose(date: Date = new Date()): boolean {
+  const { minutes } = getEasternParts(date);
+  return minutes >= POST_MARKET_END;
+}
+
+/**
+ * Whether closed trades should be auto-archived for the current Eastern calendar day.
+ * Runs once per day after post-market close (8 PM ET), or on the next morning if missed.
+ */
+export function shouldRunEndOfDayTradeArchive(
+  lastArchiveDayKey: string | undefined,
+  date: Date = new Date()
+): boolean {
+  const dayKey = getEasternDayKey(date);
+  if (lastArchiveDayKey === dayKey) return false;
+  if (isPastUsEquityPostMarketClose(date)) return true;
+  return lastArchiveDayKey != null && lastArchiveDayKey < dayKey;
+}
+
+export function getEasternDayKey(date: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const year = parts.find((p) => p.type === "year")?.value ?? "0000";
+  const month = parts.find((p) => p.type === "month")?.value ?? "01";
+  const day = parts.find((p) => p.type === "day")?.value ?? "01";
+  return `${year}-${month}-${day}`;
+}
+
 function parseTimeToMinutes(value: string): number | null {
   const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
   if (!match) return null;
@@ -49,7 +143,8 @@ function getEasternParts(date: Date) {
   }).formatToParts(date);
 
   const weekday = parts.find((p) => p.type === "weekday")?.value ?? "Mon";
-  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  const hourRaw = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  const hour = hourRaw === 24 ? 0 : hourRaw;
   const minute = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
 
   return {
@@ -81,7 +176,21 @@ export function evaluateTradingSchedule(
     return { allowed: false, reason: "Invalid trading hours configuration" };
   }
 
-  if (isBetween(minutes, start, end)) {
+  // End time is exclusive — e.g. end 16:00 means trading stops at 4:00 PM ET.
+  if (start < end) {
+    let effectiveStart = start;
+    let effectiveEnd = end;
+
+    // When extended sessions are off, clamp to regular US market hours (9:30 AM – 4:00 PM ET).
+    if (!settings.allowAfterHours && !settings.allowOvernight) {
+      effectiveStart = Math.max(effectiveStart, PRE_MARKET_END);
+      effectiveEnd = Math.min(effectiveEnd, POST_MARKET_START);
+    }
+
+    if (effectiveStart < effectiveEnd && minutes >= effectiveStart && minutes < effectiveEnd) {
+      return { allowed: true };
+    }
+  } else if (isBetween(minutes, start, end)) {
     return { allowed: true };
   }
 

@@ -1,8 +1,9 @@
 import type { Signal, StrategyPreset, Trade, TradingScheduleSettings, AlertSettings, RiskSettings } from "@wicksense/core";
 import {
   detectCurrentBarSignals,
-  detectRecentSignal,
+  detectFreshBarSignal,
   evaluateTradingSchedule,
+  isRegularUsEquitySession,
 } from "@wicksense/core";
 import { logDuplicateSignalBlocked } from "@/lib/signal-dedupe-log";
 import type { FetchBarsResult, SlotTradeConfig } from "@/lib/autoTradeRunner";
@@ -100,13 +101,12 @@ export async function runSlotCycleWithContext(
   }
 
   try {
-    const tf = timeframe || "5m";
-    const signal = detectRecentSignal(
+    const tf = timeframe || "15m";
+    const signal = detectFreshBarSignal(
       symbol,
       bars,
       activePreset.strategies,
       tradingStyle,
-      undefined,
       tf
     );
     const barSignals = detectCurrentBarSignals(
@@ -164,6 +164,26 @@ export async function runSlotCycleWithContext(
       });
       return;
     }
+
+    const scheduleCheck = evaluateTradingSchedule(ctx.tradingSchedule);
+    if (!scheduleCheck.allowed) {
+      rejectSignal(scheduleCheck.reason ?? "Outside trading schedule");
+      recordScan({
+        chartSlot: slotId,
+        symbol,
+        timeframe,
+        barCount: bars.length,
+        presetId: activePreset.id,
+        presetStrategies: activePreset.strategies,
+        barSignalCount: barSignals.length,
+        strategiesFired,
+        pickedStrategy: signal.strategy,
+        outcome: "signal_seen",
+        detail: scheduleCheck.reason ?? "Outside trading schedule",
+      });
+      return;
+    }
+
     if (safetyStopActive) {
       rejectSignal("Safety stop active");
       recordScan({
@@ -181,6 +201,25 @@ export async function runSlotCycleWithContext(
       });
       return;
     }
+
+    if (signal.side === "buy" && !isRegularUsEquitySession()) {
+      rejectSignal("Entries only during regular market hours (9:30 AM – 4:00 PM ET)");
+      recordScan({
+        chartSlot: slotId,
+        symbol,
+        timeframe,
+        barCount: bars.length,
+        presetId: activePreset.id,
+        presetStrategies: activePreset.strategies,
+        barSignalCount: barSignals.length,
+        strategiesFired,
+        pickedStrategy: signal.strategy,
+        outcome: "schedule_blocked",
+        detail: "Regular hours only for new entries",
+      });
+      return;
+    }
+
     if (mode === "manual") {
       rejectSignal("Manual mode");
       recordScan({
@@ -250,25 +289,6 @@ export async function runSlotCycleWithContext(
         pickedStrategy: signal.strategy,
         outcome: "signal_seen",
         detail: "Duplicate signal (trade already recorded)",
-      });
-      return;
-    }
-
-    const scheduleCheck = evaluateTradingSchedule(ctx.tradingSchedule);
-    if (!scheduleCheck.allowed) {
-      rejectSignal(scheduleCheck.reason ?? "Outside trading schedule");
-      recordScan({
-        chartSlot: slotId,
-        symbol,
-        timeframe,
-        barCount: bars.length,
-        presetId: activePreset.id,
-        presetStrategies: activePreset.strategies,
-        barSignalCount: barSignals.length,
-        strategiesFired,
-        pickedStrategy: signal.strategy,
-        outcome: "signal_seen",
-        detail: scheduleCheck.reason ?? "Outside trading schedule",
       });
       return;
     }

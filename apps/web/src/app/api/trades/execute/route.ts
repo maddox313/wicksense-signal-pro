@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { computePerformanceStats, computeTakeProfitPrice, isAppStrategyTrade } from "@wicksense/core";
+import {
+  computePerformanceStats,
+  computeTakeProfitPrice,
+  isAccountSyncTrade,
+  isAppStrategyTrade,
+} from "@wicksense/core";
 import type { RiskSettings, AlertSettings, Trade, TradeMode } from "@wicksense/core";
 import {
   placeOrderWithFill,
@@ -19,7 +24,9 @@ import {
   loadLiveTradingSettings,
   computeStopLossPrice,
 } from "@/lib/live-trading-config";
+import { resolveExitPercentsForChartSlot } from "@/lib/trade-exit-settings";
 import { getRiskEngine } from "@/lib/risk-engine-registry";
+import { persistSlotSafetyStopState } from "@/lib/safety-stop-sync";
 import {
   computeClosePnl,
   computeClosePnlPercent,
@@ -34,7 +41,8 @@ import {
 } from "@/lib/trade-store";
 import { syncAlpacaPositions } from "@/lib/position-sync";
 import { loadTradingScheduleSettings } from "@/lib/trading-schedule-config";
-import { evaluateTradingSchedule } from "@wicksense/core";
+import { shouldSendExtendedHoursOrders, isRegularUsEquitySession } from "@wicksense/core";
+import { getTradingScheduleStatus } from "@/lib/trading-schedule-guard";
 import { isLegacyPaperBlockSymbol } from "@/lib/legacy-paper-cleanup";
 
 function getEngine(chartSlot: string, settings: RiskSettings) {
@@ -80,8 +88,7 @@ function isRetryableFillFailure(message: string): boolean {
 }
 
 function scheduleAllowsExtendedHours(): boolean {
-  const schedule = loadTradingScheduleSettings();
-  return Boolean(schedule.unrestricted || schedule.allowAfterHours || schedule.allowOvernight);
+  return shouldSendExtendedHoursOrders(loadTradingScheduleSettings());
 }
 
 async function reconcileMode(mode: TradeMode) {
@@ -120,11 +127,19 @@ export async function POST(req: NextRequest) {
     signalBarTime?: number;
   };
 
-  const scheduleCheck = evaluateTradingSchedule(loadTradingScheduleSettings());
+  const scheduleCheck = getTradingScheduleStatus();
   if (!scheduleCheck.allowed) {
+    console.warn(`[execute] Blocked ${side} ${symbol}: ${scheduleCheck.reason ?? "Outside allowed trading hours"}`);
     return NextResponse.json({
       skipped: true,
       reason: scheduleCheck.reason ?? "Outside allowed trading hours",
+    });
+  }
+
+  if (side === "buy" && !isRegularUsEquitySession()) {
+    return NextResponse.json({
+      skipped: true,
+      reason: "New entries only during regular market hours (9:30 AM – 4:00 PM ET)",
     });
   }
 
@@ -168,7 +183,7 @@ export async function POST(req: NextRequest) {
           qty: openBuy.quantity,
           side: "sell",
           paper: false,
-          extended_hours: true,
+          extended_hours: scheduleAllowsExtendedHours(),
           fillOptions: CLOSE_ORDER_FILL_OPTIONS,
         });
         exitPrice = fill.filledAvgPrice;
@@ -184,7 +199,7 @@ export async function POST(req: NextRequest) {
           qty: openBuy.quantity,
           side: "sell",
           paper: true,
-          extended_hours: true,
+          extended_hours: scheduleAllowsExtendedHours(),
           fillOptions: CLOSE_ORDER_FILL_OPTIONS,
         });
         exitPrice = fill.filledAvgPrice;
@@ -207,6 +222,7 @@ export async function POST(req: NextRequest) {
     };
     await upsertTrade(closed);
     engine.recordTradeResult(pnl);
+    persistSlotSafetyStopState(chartSlot, riskSettings);
 
     await sendAlert(
       "default",
@@ -287,7 +303,9 @@ export async function POST(req: NextRequest) {
   }
 
   const openTrades = await getOpenTrades();
-  const slotOpenCount = openTrades.filter((t) => t.chartSlot === chartSlot).length;
+  const slotOpenCount = openTrades.filter(
+    (t) => t.chartSlot === chartSlot && !isAccountSyncTrade(t)
+  ).length;
   const check = engine.canOpenTrade(slotOpenCount);
   if (!check.allowed) {
     return NextResponse.json({ error: check.reason, safetyStopTriggered: engine.isSafetyStopActive() });
@@ -305,7 +323,8 @@ export async function POST(req: NextRequest) {
   }
 
   const liveSettings = loadLiveTradingSettings();
-  let stopLoss = computeStopLossPrice(price, liveSettings.stopLossPercent);
+  const exitPercents = resolveExitPercentsForChartSlot(chartSlot);
+  let stopLoss = computeStopLossPrice(price, exitPercents.stopLossPercent);
   const { quantity } = engine.calculatePositionSize(accountEquity, price, stopLoss);
   if (quantity <= 0) {
     return NextResponse.json({ error: "Position size too small" });
@@ -332,7 +351,7 @@ export async function POST(req: NextRequest) {
       filledQty = fill.filledQty;
 
       if (liveSettings.brokerStopLossEnabled) {
-        stopLoss = computeStopLossPrice(entryPrice, liveSettings.stopLossPercent);
+        stopLoss = computeStopLossPrice(entryPrice, exitPercents.stopLossPercent);
         try {
           const stopOrder = await placeLiveStopLossOrder({
             symbol,
@@ -392,9 +411,9 @@ export async function POST(req: NextRequest) {
   const takeProfit = computeTakeProfitPrice(
     entryPrice,
     "buy",
-    liveSettings.takeProfitPercent
+    exitPercents.takeProfitPercent
   );
-  stopLoss = computeStopLossPrice(entryPrice, liveSettings.stopLossPercent);
+  stopLoss = computeStopLossPrice(entryPrice, exitPercents.stopLossPercent);
 
   const trade: Trade = {
     id: signalId

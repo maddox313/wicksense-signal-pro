@@ -1,23 +1,28 @@
-import { evaluateTradingSchedule } from "@wicksense/core";
 import { loadAutoTradeSettings } from "@/lib/auto-trade-config";
 import { runAutoExitMonitor } from "@/lib/auto-exit-runner";
 import type { SlotTradeConfig } from "@/lib/autoTradeRunner";
 import { AUTO_TRADE_POLL_MS } from "@/lib/autoTradeRunner";
-import { MAIN_CHART_SLOT, MULTI_CHART_SLOT_IDS } from "@/lib/chart-slots";
+import { AUTO_TRADE_SLOT_IDS, MAIN_CHART_SLOT } from "@/lib/chart-slots";
 import { loadEngineConfig } from "@/lib/engine-config";
+import { getRiskEngine } from "@/lib/risk-engine-registry";
 import { resolveServerActivePreset } from "@/lib/presets-server";
 import { fetchServerSlotBars } from "@/lib/server-bars";
 import { executeServerSlotTrade } from "@/lib/server-execute-trade";
 import { runSlotCycleWithContext } from "@/lib/slot-cycle-core";
 import { syncAllAlpacaPositions } from "@/lib/position-sync";
 import { loadTradingScheduleSettings } from "@/lib/trading-schedule-config";
+import { getTradingScheduleStatus } from "@/lib/trading-schedule-guard";
 import { checkServerTradingScheduleAlerts } from "@/lib/server-trading-schedule-alerts";
+import { runDailyTradeArchiveIfDue } from "@/lib/daily-trade-archive";
 import { loadUserProfile } from "@/lib/user-config";
-import { getAllTrades } from "@/lib/trade-store";
+import { getAllTrades, getOpenTrades } from "@/lib/trade-store";
+import { routeOpportunitiesToSlots } from "@/lib/slot-opportunity-router";
+import { syncRiskEnginesFromConfig } from "@/lib/risk-engine-registry";
 import {
   createServerSlotCycleTelemetryHooks,
   markServerEngineCycleComplete,
   markServerEngineCycleStart,
+  recordServerScheduleBlocked,
 } from "@/lib/server-engine-telemetry";
 
 export { AUTO_TRADE_POLL_MS };
@@ -32,20 +37,10 @@ export function isAnyServerAutoTradeEnabled(): boolean {
 function buildServerSlotConfigs(): SlotTradeConfig[] {
   const engine = loadEngineConfig();
   const autoTrade = loadAutoTradeSettings();
-  const configs: SlotTradeConfig[] = [
-    {
-      slotId: MAIN_CHART_SLOT,
-      symbol: engine.main.symbol,
-      timeframe: engine.main.timeframe,
-      tradingStyle: engine.main.tradingStyle,
-      mode: engine.main.mode,
-      autoTradeEnabled: Boolean(autoTrade[MAIN_CHART_SLOT]),
-      safetyStopActive: engine.main.safetyStopActive,
-    },
-  ];
+  const configs: SlotTradeConfig[] = [];
 
-  for (const slotId of MULTI_CHART_SLOT_IDS) {
-    const slot = engine.multi[slotId];
+  for (const slotId of AUTO_TRADE_SLOT_IDS) {
+    const slot = slotId === MAIN_CHART_SLOT ? engine.main : engine.multi[slotId];
     configs.push({
       slotId,
       symbol: slot.symbol,
@@ -53,7 +48,9 @@ function buildServerSlotConfigs(): SlotTradeConfig[] {
       tradingStyle: slot.tradingStyle,
       mode: slot.mode,
       autoTradeEnabled: Boolean(autoTrade[slotId]),
-      safetyStopActive: slot.safetyStopActive,
+      safetyStopActive:
+        slot.safetyStopActive ||
+        getRiskEngine(slotId, engine.riskSettings).isSafetyStopActive(),
     });
   }
 
@@ -67,6 +64,7 @@ export interface TradeEngineTickResult {
   durationMs: number;
   slotsScanned: number;
   autoExitClosed?: number;
+  archivedClosed?: number;
 }
 
 export async function runTradeEngineTick(): Promise<TradeEngineTickResult> {
@@ -87,18 +85,33 @@ export async function runTradeEngineTick(): Promise<TradeEngineTickResult> {
   try {
     await syncAllAlpacaPositions();
 
+    const archiveResult = await runDailyTradeArchiveIfDue();
+
     const engine = loadEngineConfig();
     const profile = loadUserProfile();
     const tradingSchedule = loadTradingScheduleSettings();
-    const activePreset = resolveServerActivePreset(engine.activePresetId);
+    const scheduleEval = getTradingScheduleStatus();
 
-    if (isAnyServerAutoTradeEnabled()) {
+    syncRiskEnginesFromConfig(engine.riskSettings);
+
+    const openTrades = await getOpenTrades();
+    const hasOpenTrades = openTrades.some(
+      (t) => t.status === "open" && (t.mode === "paper" || t.mode === "live")
+    );
+
+    // Auto-exit runs whenever positions are open — even outside trading hours (prevents overnight bleed).
+    if (hasOpenTrades || isAnyServerAutoTradeEnabled()) {
       const exitResult = await runAutoExitMonitor(engine.riskSettings);
       if (exitResult.closedCount > 0) {
         console.log(`[trade-engine] Auto-exit closed ${exitResult.closedCount} trade(s)`);
       }
+    }
+
+    if (isAnyServerAutoTradeEnabled()) {
       await checkServerTradingScheduleAlerts();
     }
+
+    const activePreset = resolveServerActivePreset(engine.activePresetId);
 
     if (!activePreset) {
       return {
@@ -111,6 +124,37 @@ export async function runTradeEngineTick(): Promise<TradeEngineTickResult> {
 
     const slotConfigs = buildServerSlotConfigs();
     const enabledSlots = slotConfigs.filter((c) => c.autoTradeEnabled).map((c) => c.slotId);
+
+    if (scheduleEval.allowed) {
+      const g = globalThis as typeof globalThis & { __wicksenseLoggedScheduleBlock?: string };
+      g.__wicksenseLoggedScheduleBlock = undefined;
+
+      if (enabledSlots.length > 0) {
+        const scanTimeframe = engine.main.timeframe || activePreset.timeframe;
+        const assignments = await routeOpportunitiesToSlots({
+          preset: activePreset,
+          timeframe: scanTimeframe,
+          openTrades,
+        });
+        const changed = assignments.filter((a) => a.changed);
+        if (changed.length > 0) {
+          console.log(
+            `[trade-engine] Routed opportunities: ${changed
+              .map((a) => `${a.slotId}→${a.symbol}`)
+              .join(", ")}`
+          );
+        }
+      }
+    } else {
+      const g = globalThis as typeof globalThis & { __wicksenseLoggedScheduleBlock?: string };
+      const blockKey = scheduleEval.reason ?? "blocked";
+      if (g.__wicksenseLoggedScheduleBlock !== blockKey) {
+        console.log(`[trade-engine] Trading paused: ${scheduleEval.reason ?? "Outside trading schedule"}`);
+        g.__wicksenseLoggedScheduleBlock = blockKey;
+      }
+      recordServerScheduleBlocked(enabledSlots);
+    }
+
     if (enabledSlots.length > 0 && process.env.NODE_ENV === "development") {
       // Log once per process — avoid flooding the dev console every 30s.
       const g = globalThis as typeof globalThis & { __wicksenseLoggedAutoTradeSlots?: boolean };
@@ -126,29 +170,33 @@ export async function runTradeEngineTick(): Promise<TradeEngineTickResult> {
 
     const telemetryHooks = createServerSlotCycleTelemetryHooks();
 
-    for (const config of slotConfigs) {
-      await runSlotCycleWithContext(config, {
-        getTrades: getAllTrades,
-        tradingSchedule,
-        riskSettings: engine.riskSettings,
-        alertSettings: profile.alertSettings,
-        resolveActivePreset: () => activePreset,
-        fetchBars: fetchServerSlotBars,
-        executeTrade: (params) =>
-          executeServerSlotTrade({
-            ...params,
-            riskSettings: engine.riskSettings,
-            alertSettings: profile.alertSettings,
-          }),
-        ...telemetryHooks,
-      });
-      slotsScanned += 1;
+    if (scheduleEval.allowed) {
+      const activeSlotConfigs = buildServerSlotConfigs();
+      for (const config of activeSlotConfigs) {
+        await runSlotCycleWithContext(config, {
+          getTrades: getAllTrades,
+          tradingSchedule,
+          riskSettings: engine.riskSettings,
+          alertSettings: profile.alertSettings,
+          resolveActivePreset: () => activePreset,
+          fetchBars: fetchServerSlotBars,
+          executeTrade: (params) =>
+            executeServerSlotTrade({
+              ...params,
+              riskSettings: engine.riskSettings,
+              alertSettings: profile.alertSettings,
+            }),
+          ...telemetryHooks,
+        });
+        slotsScanned += 1;
+      }
     }
 
     return {
       ok: true,
       durationMs: Date.now() - started,
       slotsScanned,
+      archivedClosed: archiveResult.archived,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -548,14 +548,14 @@ function LiveStopLossSection({
 
             <div className="rounded-lg border border-[var(--card-border)] bg-white/5 p-4">
               <label className="mb-2 block text-sm font-medium">
-                Stop distance: {settings?.stopLossPercent ?? 2}%
+                Stop distance: {settings?.stopLossPercent ?? 1}%
               </label>
               <input
                 type="range"
                 min={0.5}
                 max={10}
                 step={0.5}
-                value={settings?.stopLossPercent ?? 2}
+                value={settings?.stopLossPercent ?? 1}
                 disabled={saving}
                 onChange={(e) =>
                   onSave({ stopLossPercent: parseFloat(e.target.value) })
@@ -564,7 +564,7 @@ function LiveStopLossSection({
               />
               <p className="mt-2 text-xs text-[var(--muted)]">
                 Also used for position sizing risk distance. Example on $310 entry: stop at $
-                {(310 * (1 - (settings?.stopLossPercent ?? 2) / 100)).toFixed(2)}
+                {(310 * (1 - (settings?.stopLossPercent ?? 1) / 100)).toFixed(2)}
               </p>
             </div>
           </div>

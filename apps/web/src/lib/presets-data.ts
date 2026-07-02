@@ -8,7 +8,7 @@ export const DEFAULT_PRESETS: StrategyPreset[] = [
     description: "Fast day trades using VWAP, wick rejection, and EMA crossover.",
     tradingStyle: "day",
     strategies: ["vwap-bounce", "wick-rejection", "ema-crossover", "rsi-reversal"],
-    timeframe: "5m",
+    timeframe: "15m",
     riskSettings: DEFAULT_RISK_SETTINGS,
     isAiGenerated: false,
     enabled: true,

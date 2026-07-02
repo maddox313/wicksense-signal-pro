@@ -1,8 +1,7 @@
 import {
   computePerformanceStats,
   evaluateAutoExit,
-  isAppStrategyTrade,
-  isAutoExitMonitoredTrade,
+  isNearUsEquitySessionEnd,
   DEFAULT_RISK_SETTINGS,
   type AutoExitCloseReason,
   type RiskSettings,
@@ -10,9 +9,11 @@ import {
 } from "@wicksense/core";
 import { fetchQuote } from "@/lib/alpaca";
 import { sendAlert } from "@/lib/alerts";
+import { prepareOpenTradesForAutoExit } from "@/lib/auto-exit-levels";
 import { getUserContact, loadUserProfile } from "@/lib/user-config";
 import { closeTradeRecord } from "@/lib/close-trade-record";
 import { getAllTrades, getOpenTrades } from "@/lib/trade-store";
+import { resolveTradingStyleForTrade } from "@/lib/trade-exit-settings";
 
 const exitInFlight = new Set<string>();
 
@@ -52,9 +53,7 @@ export async function runAutoExitMonitor(
   const effectiveRisk = riskSettings ?? DEFAULT_RISK_SETTINGS;
 
   const openTrades = await getOpenTrades();
-  const candidates = openTrades.filter(
-    (t) => isAppStrategyTrade(t) && isAutoExitMonitoredTrade(t)
-  );
+  const candidates = await prepareOpenTradesForAutoExit(openTrades);
   const monitored = candidates.length;
 
   const closed: Trade[] = [];
@@ -65,12 +64,22 @@ export async function runAutoExitMonitor(
     if (!trade.stopLossPrice || !trade.takeProfitPrice) continue;
 
     const currentPrice = await resolveLatestPrice(trade.symbol, trade.entryPrice);
-    const closeReason = evaluateAutoExit(
+    let closeReason: AutoExitCloseReason | null = evaluateAutoExit(
       trade.side,
       currentPrice,
       trade.stopLossPrice,
       trade.takeProfitPrice
     );
+
+    // Force flat day trades in the last 5 minutes of RTH — avoids overnight stop slippage.
+    if (
+      !closeReason &&
+      resolveTradingStyleForTrade(trade) === "day" &&
+      isNearUsEquitySessionEnd()
+    ) {
+      closeReason = "SESSION_END";
+    }
+
     if (!closeReason) continue;
 
     exitInFlight.add(trade.id);
@@ -93,8 +102,18 @@ export async function runAutoExitMonitor(
       });
       closed.push(result);
 
-      const alertType = closeReason === "STOP_LOSS" ? "stop_loss" : "sell";
-      const label = closeReason === "STOP_LOSS" ? "STOP LOSS" : "TAKE PROFIT";
+      const alertType =
+        closeReason === "STOP_LOSS"
+          ? "stop_loss"
+          : closeReason === "SESSION_END"
+            ? "sell"
+            : "sell";
+      const label =
+        closeReason === "STOP_LOSS"
+          ? "STOP LOSS"
+          : closeReason === "SESSION_END"
+            ? "SESSION END FLAT"
+            : "TAKE PROFIT";
       await sendAlert(
         "default",
         alertType,

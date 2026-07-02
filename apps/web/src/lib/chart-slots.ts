@@ -5,6 +5,11 @@ export const ALPACA_SYNC_SLOT = "alpaca-sync";
 
 export const MULTI_CHART_SLOT_IDS = ["multi-1", "multi-2", "multi-3", "multi-4"] as const;
 
+/** Auto-trade uses main + 2 multi charts (3 uncorrelated names max). */
+export const AUTO_TRADE_SLOT_IDS = [MAIN_CHART_SLOT, "multi-1", "multi-2"] as const;
+
+export type AutoTradeSlotId = (typeof AUTO_TRADE_SLOT_IDS)[number];
+
 export const ALL_CHART_SLOT_IDS = [MAIN_CHART_SLOT, ...MULTI_CHART_SLOT_IDS] as const;
 
 export type ChartSlotId = (typeof ALL_CHART_SLOT_IDS)[number];

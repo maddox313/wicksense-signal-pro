@@ -1,11 +1,18 @@
 import type { Trade, TradeSide } from "@wicksense/core";
-import { DEFAULT_RISK_SETTINGS, isAccountSyncTrade, isAppStrategyTrade } from "@wicksense/core";
+import {
+  DEFAULT_RISK_SETTINGS,
+  computeTakeProfitPrice,
+  computeStopLossPriceForSide,
+  isAccountSyncTrade,
+  isAppStrategyTrade,
+} from "@wicksense/core";
 import {
   getPositions,
   fetchQuote,
   type AlpacaPosition,
 } from "@/lib/alpaca";
 import { hasPaperCredentials, hasLiveCredentials } from "@/lib/broker-config";
+import { resolveExitPercentsForChartSlot } from "@/lib/trade-exit-settings";
 import { ALPACA_SYNC_SLOT } from "@/lib/chart-slots";
 import {
   alpacaPositionQty,
@@ -291,6 +298,7 @@ export async function syncAlpacaPositions(
     const qty = alpacaPositionQty(pos);
     const entry = parseFloat(pos.avg_entry_price);
     const attribution = await resolveStrategyAttribution(symbol, side, mode);
+    const syncExitPercents = resolveExitPercentsForChartSlot(ALPACA_SYNC_SLOT);
 
     if (attribution) {
       await upsertAttributedOpenTrade({
@@ -316,7 +324,16 @@ export async function syncAlpacaPositions(
       strategy: "alpaca-sync",
       status: "open",
       chartSlot: ALPACA_SYNC_SLOT,
-      stopLossPrice: undefined,
+      stopLossPrice: computeStopLossPriceForSide(
+        entry,
+        side,
+        syncExitPercents.stopLossPercent
+      ),
+      takeProfitPrice: computeTakeProfitPrice(
+        entry,
+        side,
+        syncExitPercents.takeProfitPercent
+      ),
     });
     imported++;
   }

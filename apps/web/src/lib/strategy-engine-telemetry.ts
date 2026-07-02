@@ -15,7 +15,7 @@ export interface SlotScanRecord {
   barSignalCount: number;
   strategiesFired: string[];
   pickedStrategy: string | null;
-  outcome: "no_bars" | "no_preset" | "detect_error" | "no_signal" | "signal_seen" | "signal_traded";
+  outcome: "no_bars" | "no_preset" | "detect_error" | "no_signal" | "signal_seen" | "signal_traded" | "schedule_blocked";
   detail?: string;
 }
 

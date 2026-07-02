@@ -24,10 +24,10 @@ export interface EngineConfig {
 }
 
 const DEFAULT_MULTI_SLOTS: EngineSlotConfig[] = [
-  { symbol: "TSLA", timeframe: "5m", tradingStyle: "day", mode: "paper", safetyStopActive: false, consecutiveLosses: 0 },
-  { symbol: "MSFT", timeframe: "5m", tradingStyle: "day", mode: "paper", safetyStopActive: false, consecutiveLosses: 0 },
-  { symbol: "GOOGL", timeframe: "5m", tradingStyle: "day", mode: "paper", safetyStopActive: false, consecutiveLosses: 0 },
-  { symbol: "NVDA", timeframe: "5m", tradingStyle: "day", mode: "paper", safetyStopActive: false, consecutiveLosses: 0 },
+  { symbol: "TSLA", timeframe: "15m", tradingStyle: "day", mode: "paper", safetyStopActive: false, consecutiveLosses: 0 },
+  { symbol: "MSFT", timeframe: "15m", tradingStyle: "day", mode: "paper", safetyStopActive: false, consecutiveLosses: 0 },
+  { symbol: "GOOGL", timeframe: "15m", tradingStyle: "day", mode: "paper", safetyStopActive: false, consecutiveLosses: 0 },
+  { symbol: "NVDA", timeframe: "15m", tradingStyle: "day", mode: "paper", safetyStopActive: false, consecutiveLosses: 0 },
 ];
 
 const VALID_TIMEFRAMES = new Set(["1m", "5m", "15m", "30m", "1h", "4h", "1d"]);

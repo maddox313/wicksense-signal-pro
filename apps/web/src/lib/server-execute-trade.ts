@@ -1,7 +1,7 @@
 import type { OHLCV, AlertSettings, RiskSettings, TradeMode } from "@wicksense/core";
 import { NextRequest } from "next/server";
 import { POST as executeTradeHandler } from "@/app/api/trades/execute/route";
-import { patchEngineSlot } from "@/lib/engine-config";
+import { persistSlotSafetyStopState } from "@/lib/safety-stop-sync";
 
 export interface ServerExecuteResult {
   ok: boolean;
@@ -68,11 +68,8 @@ export async function executeServerSlotTrade(params: {
       consecutiveLosses?: number;
     };
 
-    if (data.safetyStopTriggered) {
-      patchEngineSlot(slotId, { safetyStopActive: true });
-    }
-    if (typeof data.consecutiveLosses === "number") {
-      patchEngineSlot(slotId, { consecutiveLosses: data.consecutiveLosses });
+    if (data.safetyStopTriggered || typeof data.consecutiveLosses === "number") {
+      persistSlotSafetyStopState(slotId, riskSettings);
     }
 
     if (data.skipped) {
@@ -86,6 +83,7 @@ export async function executeServerSlotTrade(params: {
       return { ok: false, reason: data.error ?? "Trade failed" };
     }
 
+    persistSlotSafetyStopState(slotId, riskSettings);
     console.log(`[ServerAutoTrade:${slotId}] ${side.toUpperCase()} ${symbol} @ ${price}`);
     return { ok: true };
   } catch (err) {

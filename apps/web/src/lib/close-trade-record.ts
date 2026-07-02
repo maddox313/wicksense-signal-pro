@@ -6,6 +6,7 @@ import {
   type Trade,
 } from "@wicksense/core";
 import { getRiskEngine } from "@/lib/risk-engine-registry";
+import { persistSlotSafetyStopState } from "@/lib/safety-stop-sync";
 import {
   computeClosePnl,
   computeClosePnlPercent,
@@ -52,6 +53,7 @@ export async function closeTradeRecord(params: {
 
   await upsertTrade(closed);
   getRiskEngine(slot, riskSettings).recordTradeResult(pnl);
+  persistSlotSafetyStopState(slot, riskSettings);
   await syncAlpacaPositions(trade.mode);
 
   return closed;

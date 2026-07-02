@@ -116,6 +116,9 @@ export function runBacktest(
 const MIN_BARS = 30;
 const DEFAULT_SCAN_LOOKBACK = 20;
 
+/** Minimum confidence to act on a signal for auto-trade (avoids weak marginal setups). */
+export const MIN_TRADE_SIGNAL_CONFIDENCE = 0.68;
+
 /** Scan recent bars for the latest strategy signal (not just the current bar). */
 export function detectRecentSignal(
   symbol: string,
@@ -154,6 +157,26 @@ export function detectCurrentBarSignals(
   return evaluateStrategies({ symbol, bars, style, timeframe }, strategyIds);
 }
 
+/**
+ * Fresh signal on the latest bar only — no stale lookback entries.
+ * Returns null when confidence is below the trade threshold.
+ */
+export function detectFreshBarSignal(
+  symbol: string,
+  bars: OHLCV[],
+  strategyIds: string[],
+  style: TradingStyle,
+  timeframe = "5m",
+  minConfidence = MIN_TRADE_SIGNAL_CONFIDENCE
+): Signal | null {
+  const signals = detectCurrentBarSignals(symbol, bars, strategyIds, style, timeframe);
+  const signal = pickScannerSignal(signals);
+  if (!signal || signal.confidence < minConfidence) return null;
+  const lastBar = bars[bars.length - 1];
+  if (signal.time !== lastBar.time) return null;
+  return signal;
+}
+
 export function scanMarket(
   data: { symbol: string; bars: OHLCV[]; changePercent: number }[],
   strategyIds: string[],
@@ -165,14 +188,7 @@ export function scanMarket(
   const results: ScannerResult[] = [];
   for (const item of data) {
     if (item.bars.length < MIN_BARS) continue;
-    const signal = detectRecentSignal(
-      item.symbol,
-      item.bars,
-      strategyIds,
-      style,
-      lookback,
-      tf
-    );
+    const signal = detectFreshBarSignal(item.symbol, item.bars, strategyIds, style, tf);
     if (!signal) continue;
     const lastBar = item.bars[item.bars.length - 1];
     results.push({
@@ -197,7 +213,7 @@ export function generateAiPreset(
     description: `AI-optimized ${style} trading preset combining top-performing strategies.`,
     tradingStyle: style,
     strategies: style === "day" ? dayStrategies : swingStrategies,
-    timeframe: style === "day" ? "5m" : "1d",
+    timeframe: style === "day" ? "15m" : "1d",
     riskSettings,
     isAiGenerated: true,
     enabled: true,

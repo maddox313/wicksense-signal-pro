@@ -1,10 +1,16 @@
 import type { Trade } from "@wicksense/core";
+import { isExtendedUsEquitySession, shouldSendExtendedHoursOrders } from "@wicksense/core";
 import {
   cancelOpenExitOrdersForSymbol,
   CLOSE_ORDER_FILL_OPTIONS,
   liquidatePositionWithFill,
   placeOrderWithFill,
 } from "@/lib/alpaca";
+import { loadTradingScheduleSettings } from "@/lib/trading-schedule-config";
+
+function useExtendedHoursOrders(): boolean {
+  return shouldSendExtendedHoursOrders(loadTradingScheduleSettings());
+}
 
 export interface BrokerCloseResult {
   exitPrice: number;
@@ -56,7 +62,7 @@ async function sellToCloseLong(
       qty: trade.quantity,
       side: "sell",
       paper,
-      extended_hours: true,
+      extended_hours: useExtendedHoursOrders(),
       fillOptions: CLOSE_ORDER_FILL_OPTIONS,
     });
     return {
@@ -65,6 +71,11 @@ async function sellToCloseLong(
       orderId: fill.orderId,
     };
   };
+
+  // DELETE /positions submits a market close — fails during extended hours (42210000).
+  if (isExtendedUsEquitySession()) {
+    return runMarketSell();
+  }
 
   try {
     return await runLiquidation();
@@ -98,7 +109,7 @@ async function buyToCoverShort(
       qty: trade.quantity,
       side: "buy",
       paper,
-      extended_hours: true,
+      extended_hours: useExtendedHoursOrders(),
       fillOptions: CLOSE_ORDER_FILL_OPTIONS,
     });
 

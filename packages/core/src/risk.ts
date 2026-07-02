@@ -73,6 +73,12 @@ export class RiskEngine {
   getConsecutiveLosses() {
     return this.consecutiveLosses;
   }
+
+  /** Restore persisted slot state after server restart. */
+  hydratePersistedState(consecutiveLosses: number, safetyStopActive: boolean) {
+    this.consecutiveLosses = Math.max(0, consecutiveLosses);
+    this.safetyStopTriggered = safetyStopActive;
+  }
 }
 
 export function computePerformanceStats(trades: Trade[]): PerformanceStats {

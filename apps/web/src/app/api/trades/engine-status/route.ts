@@ -1,29 +1,24 @@
 import { NextResponse } from "next/server";
 import { loadAutoTradeSettings } from "@/lib/auto-trade-config";
+import { selectCanonicalOpenTrades } from "@/lib/auto-exit-levels";
+import { getDataDir } from "@/lib/data-paths";
 import { loadEngineConfig } from "@/lib/engine-config";
 import { loadServerEngineTelemetry } from "@/lib/server-engine-telemetry";
 import { getOpenTrades } from "@/lib/trade-store";
-import {
-  isAppStrategyTrade,
-  isAutoExitMonitoredTrade,
-  evaluateTradingSchedule,
-} from "@wicksense/core";
+import { getTradingScheduleStatus } from "@/lib/trading-schedule-guard";
 import {
   isAnyServerAutoTradeEnabled,
   isTradeEngineEnabled,
 } from "@/lib/server-trade-engine";
-import { loadTradingScheduleSettings } from "@/lib/trading-schedule-config";
 
 export async function GET() {
   const autoTradeEnabled = isAnyServerAutoTradeEnabled();
   const autoTradeSlots = loadAutoTradeSettings();
   const engineConfig = loadEngineConfig();
   const telemetry = loadServerEngineTelemetry();
-  const schedule = evaluateTradingSchedule(loadTradingScheduleSettings());
+  const schedule = getTradingScheduleStatus();
   const openTrades = await getOpenTrades();
-  const monitoredCount = openTrades.filter(
-    (t) => isAppStrategyTrade(t) && isAutoExitMonitoredTrade(t)
-  ).length;
+  const monitoredCount = selectCanonicalOpenTrades(openTrades).length;
 
   const blockers: string[] = [];
   if (!isTradeEngineEnabled()) blockers.push("TRADE_ENGINE_ENABLED=false");
@@ -44,6 +39,7 @@ export async function GET() {
     lastCycleAt: telemetry.lastCycleCompletedAt,
     scheduleAllowed: schedule.allowed,
     scheduleReason: schedule.reason,
+    dataDir: getDataDir(),
     blockers,
     autoExitStatus: {
       enabled: autoTradeEnabled,

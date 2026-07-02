@@ -8,7 +8,7 @@ export interface MainChartPrefs {
 
 export const DEFAULT_MAIN_CHART_PREFS: MainChartPrefs = {
   symbol: "AAPL",
-  timeframe: "5m",
+  timeframe: "15m",
   tradingStyle: "day",
 };
 

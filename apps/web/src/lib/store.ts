@@ -110,10 +110,10 @@ export interface MultiChartSlot {
 }
 
 const DEFAULT_MULTI_SLOTS: MultiChartSlot[] = [
-  { id: "multi-1", label: "Chart 1", symbol: "TSLA", timeframe: "5m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
-  { id: "multi-2", label: "Chart 2", symbol: "MSFT", timeframe: "5m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
-  { id: "multi-3", label: "Chart 3", symbol: "GOOGL", timeframe: "5m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
-  { id: "multi-4", label: "Chart 4", symbol: "NVDA", timeframe: "5m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
+  { id: "multi-1", label: "Chart 1", symbol: "TSLA", timeframe: "15m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
+  { id: "multi-2", label: "Chart 2", symbol: "MSFT", timeframe: "15m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
+  { id: "multi-3", label: "Chart 3", symbol: "GOOGL", timeframe: "15m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
+  { id: "multi-4", label: "Chart 4", symbol: "NVDA", timeframe: "15m", tradingStyle: "day", mode: "paper", autoTradeEnabled: false, markers: [], safetyStopActive: false, consecutiveLosses: 0 },
 ];
 
 interface AppState {
