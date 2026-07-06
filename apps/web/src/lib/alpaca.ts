@@ -159,6 +159,31 @@ const TIMEFRAME_MAP: Record<string, string> = {
   "1w": "1Week",
 };
 
+/** Alpaca returns the oldest `limit` bars from `start` — anchor window on `end`, not today. */
+function barsLookbackSpanMs(timeframe: string, limit: number): number {
+  const barMinutes: Record<string, number> = {
+    "1m": 1,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "1h": 60,
+    "4h": 240,
+    "1d": 390,
+    "1w": 1950,
+  };
+  const minutesPerBar = barMinutes[timeframe] ?? 5;
+  const rthMinutesPerDay = 390;
+
+  if (timeframe === "1d" || timeframe === "1w") {
+    return (limit + 5) * 86400000;
+  }
+
+  const tradingDaysNeeded = Math.ceil((limit * minutesPerBar) / rthMinutesPerDay);
+  // +2 calendar days for weekends; keep span tight so `limit` does not clip fresh bars.
+  const calendarDays = tradingDaysNeeded + 2;
+  return calendarDays * 86400000;
+}
+
 export async function fetchBars(
   symbol: string,
   timeframe: string,
@@ -166,8 +191,9 @@ export async function fetchBars(
 ): Promise<{ bars: OHLCV[]; source: "alpaca" | "mock"; error?: string }> {
   const tf = TIMEFRAME_MAP[timeframe] ?? "5Min";
   // Free IEX feed: end must be at least ~15 minutes before now
-  const end = new Date(Date.now() - 20 * 60 * 1000).toISOString();
-  const start = new Date(Date.now() - 30 * 86400000).toISOString();
+  const endMs = Date.now() - 20 * 60 * 1000;
+  const end = new Date(endMs).toISOString();
+  const start = new Date(endMs - barsLookbackSpanMs(timeframe, limit)).toISOString();
 
   if (!hasAlpacaCredentials()) {
     return {
