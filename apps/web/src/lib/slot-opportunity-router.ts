@@ -1,5 +1,5 @@
 import type { StrategyPreset, Trade } from "@wicksense/core";
-import { AUTO_TRADE_SLOT_IDS } from "@/lib/chart-slots";
+import { MULTI_CHART_SLOT_IDS } from "@/lib/chart-slots";
 import { loadEngineConfig, patchEngineSlot } from "@/lib/engine-config";
 import { scanTopOpportunities } from "@/lib/market-opportunity-scanner";
 
@@ -58,24 +58,34 @@ export interface SlotSymbolAssignment {
 }
 
 /**
- * Assign top-confidence opportunities to auto-trade slots (unique symbols).
+ * Assign top-confidence opportunities to multi-chart auto-trade slots (unique symbols).
+ * Main Chart symbol is owned by main-chart-router (best executable / pin / manual).
  * Slots with open positions keep their current symbol.
  */
 export async function routeOpportunitiesToSlots(params: {
   preset: StrategyPreset;
   timeframe: string;
   openTrades: Trade[];
+  /** When true (default), do not assign the main slot — Main Chart router owns it. */
+  skipMain?: boolean;
 }): Promise<SlotSymbolAssignment[]> {
+  const skipMain = params.skipMain !== false;
   const engine = loadEngineConfig();
   const opportunities = await scanTopOpportunities({
     preset: params.preset,
     timeframe: params.timeframe,
   });
 
+  const slotIds = skipMain ? [...MULTI_CHART_SLOT_IDS] : ["main", ...MULTI_CHART_SLOT_IDS];
   const assignments: SlotSymbolAssignment[] = [];
   const reserved = new Set<string>();
 
-  for (const slotId of AUTO_TRADE_SLOT_IDS) {
+  // Reserve main symbol so multi slots stay uncorrelated with the Main Chart assignment.
+  if (skipMain) {
+    reserved.add(engine.main.symbol.toUpperCase());
+  }
+
+  for (const slotId of slotIds) {
     const slot = slotId === "main" ? engine.main : engine.multi[slotId];
     const current = slot.symbol.toUpperCase();
 
@@ -91,7 +101,7 @@ export async function routeOpportunitiesToSlots(params: {
     }
   }
 
-  const slotsNeedingSymbols = AUTO_TRADE_SLOT_IDS.filter(
+  const slotsNeedingSymbols = slotIds.filter(
     (id) => !assignments.some((a) => a.slotId === id)
   );
   const candidates = pickUncorrelatedCandidates(

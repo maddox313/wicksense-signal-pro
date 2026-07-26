@@ -11,7 +11,8 @@
     "lint": "next lint",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
-    "test:sync": "node --experimental-strip-types --test src/lib/position-sync-helpers.test.ts src/lib/alpaca-order-fill.test.ts"
+    "test:sync": "node --experimental-strip-types --test src/lib/position-sync-helpers.test.ts src/lib/alpaca-order-fill.test.ts",
+    "test:main-chart-routing": "npx --yes tsx --test src/lib/main-chart-routing.test.ts"
   },
   "engines": {
     "node": "^20.19 || ^22.12 || >=24.0"
@@ -34,6 +35,7 @@
     "prisma": "7.8.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "server-only": "^0.0.1",
     "tailwindcss": "4.3.2",
     "zustand": "^5.0.3"
   },

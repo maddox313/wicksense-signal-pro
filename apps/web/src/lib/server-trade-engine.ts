@@ -17,6 +17,7 @@ import { runDailyTradeArchiveIfDue } from "@/lib/daily-trade-archive";
 import { loadUserProfile } from "@/lib/user-config";
 import { getAllTrades, getOpenTrades } from "@/lib/trade-store";
 import { routeOpportunitiesToSlots } from "@/lib/slot-opportunity-router";
+import { syncMainChartRoutingForTick } from "@/lib/main-chart-router";
 import { syncRiskEnginesFromConfig } from "@/lib/risk-engine-registry";
 import {
   createServerSlotCycleTelemetryHooks,
@@ -96,7 +97,7 @@ export async function runTradeEngineTick(): Promise<TradeEngineTickResult> {
 
     syncRiskEnginesFromConfig(engine.riskSettings);
 
-    const openTrades = await getOpenTrades();
+    let openTrades = await getOpenTrades();
     const hasOpenTrades = openTrades.some(
       (t) => t.status === "open" && (t.mode === "paper" || t.mode === "live")
     );
@@ -106,6 +107,8 @@ export async function runTradeEngineTick(): Promise<TradeEngineTickResult> {
       const exitResult = await runAutoExitMonitor(engine.riskSettings);
       if (exitResult.closedCount > 0) {
         console.log(`[trade-engine] Auto-exit closed ${exitResult.closedCount} trade(s)`);
+        // Refresh so Main Chart pin release / routing sees post-exit state.
+        openTrades = await getOpenTrades();
       }
     }
 
@@ -134,10 +137,28 @@ export async function runTradeEngineTick(): Promise<TradeEngineTickResult> {
 
       if (enabledSlots.length > 0) {
         const scanTimeframe = engine.main.timeframe || activePreset.timeframe;
+
+        // Main Chart: authoritative routing (AUTO best-executable / MANUAL / pin).
+        // Must run before main slot cycle so the chart symbol matches the trade.
+        if (enabledSlots.includes(MAIN_CHART_SLOT)) {
+          const mainRouting = await syncMainChartRoutingForTick({
+            preset: activePreset,
+            openTrades,
+            tradingSchedule,
+          });
+          if (mainRouting.lastAssignment) {
+            console.log(
+              `[trade-engine] Main Chart → ${mainRouting.mainSymbol} (${mainRouting.lastAssignment.reason})`
+            );
+          }
+        }
+
+        // Multi slots only — main is owned by main-chart-router.
         const assignments = await routeOpportunitiesToSlots({
           preset: activePreset,
           timeframe: scanTimeframe,
           openTrades,
+          skipMain: true,
         });
         const changed = assignments.filter((a) => a.changed);
         if (changed.length > 0) {

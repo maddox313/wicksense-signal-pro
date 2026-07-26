@@ -6,13 +6,14 @@ import {
   mainTradingSignature,
   slotTradingSignature,
 } from "@/lib/engine-config-sync-utils";
-import { hasStoredMainChartPrefs } from "@/lib/main-chart-prefs";
+import { fetchMainChartRouting } from "@/lib/main-chart-routing-client";
 
 function buildEngineConfigPayload(state: ReturnType<typeof useAppStore.getState>) {
   return {
     activePresetId: state.activePresetId,
     riskSettings: state.riskSettings,
     main: {
+      // In AUTO the server ignores symbol; still send for MANUAL mirror.
       symbol: state.symbol,
       timeframe: state.timeframe,
       tradingStyle: state.tradingStyle,
@@ -36,7 +37,61 @@ function buildEngineConfigPayload(state: ReturnType<typeof useAppStore.getState>
   };
 }
 
-/** Keeps server-side engine config in sync with UI settings for headless trading. */
+async function hydrateFromServer() {
+  const [engineRes, routing] = await Promise.all([
+    fetch("/api/settings/engine-config"),
+    fetchMainChartRouting(),
+  ]);
+  if (!engineRes.ok) return;
+  const data = await engineRes.json();
+  const store = useAppStore.getState();
+
+  if (data.activePresetId) store.setActivePresetId(data.activePresetId);
+  if (data.riskSettings) store.setRiskSettings(data.riskSettings);
+
+  // Main Chart symbol always mirrors authoritative engine/routing state.
+  if (data.main) {
+    if (data.main.symbol) store.applyServerMainSymbol(data.main.symbol);
+    if (data.main.timeframe) store.setTimeframe(data.main.timeframe);
+    if (data.main.tradingStyle) store.setTradingStyle(data.main.tradingStyle);
+    if (data.main.mode) store.setMode(data.main.mode);
+    store.setSafetyStopActive(Boolean(data.main.safetyStopActive));
+    if (typeof data.main.consecutiveLosses === "number") {
+      store.setConsecutiveLosses(data.main.consecutiveLosses);
+    }
+  }
+
+  if (routing) {
+    store.setMainChartRoutingMeta({
+      mode: routing.mode,
+      reason: routing.lastAssignment?.reason ?? null,
+    });
+    if (routing.mainSymbol) {
+      store.applyServerMainSymbol(routing.mainSymbol);
+    }
+  }
+
+  if (data.multi) {
+    for (const slot of store.multiChartSlots) {
+      const remote = data.multi[slot.id];
+      if (remote) {
+        store.updateMultiChartSlot(slot.id, {
+          symbol: remote.symbol ?? slot.symbol,
+          timeframe: remote.timeframe ?? slot.timeframe,
+          tradingStyle: remote.tradingStyle ?? slot.tradingStyle,
+          mode: remote.mode ?? slot.mode,
+          safetyStopActive: Boolean(remote.safetyStopActive),
+          consecutiveLosses:
+            typeof remote.consecutiveLosses === "number"
+              ? remote.consecutiveLosses
+              : slot.consecutiveLosses,
+        });
+      }
+    }
+  }
+}
+
+/** Keeps UI in sync with server engine + Main Chart routing. Engine does not need the UI. */
 export function EngineConfigSync() {
   const hydratedRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -45,48 +100,11 @@ export function EngineConfigSync() {
   useEffect(() => {
     void (async () => {
       try {
-        const res = await fetch("/api/settings/engine-config");
-        if (!res.ok) return;
-        const data = await res.json();
-        const store = useAppStore.getState();
-        const preferLocalMain = hasStoredMainChartPrefs();
-
-        if (data.activePresetId) store.setActivePresetId(data.activePresetId);
-        if (data.riskSettings) store.setRiskSettings(data.riskSettings);
-        if (data.main) {
-          if (!preferLocalMain) {
-            if (data.main.symbol) store.setSymbol(data.main.symbol);
-            if (data.main.timeframe) store.setTimeframe(data.main.timeframe);
-            if (data.main.tradingStyle) store.setTradingStyle(data.main.tradingStyle);
-          }
-          if (data.main.mode) store.setMode(data.main.mode);
-          store.setSafetyStopActive(Boolean(data.main.safetyStopActive));
-          if (typeof data.main.consecutiveLosses === "number") {
-            store.setConsecutiveLosses(data.main.consecutiveLosses);
-          }
-        }
-        if (data.multi) {
-          for (const slot of store.multiChartSlots) {
-            const remote = data.multi[slot.id];
-            if (remote) {
-              store.updateMultiChartSlot(slot.id, {
-                symbol: remote.symbol ?? slot.symbol,
-                timeframe: remote.timeframe ?? slot.timeframe,
-                tradingStyle: remote.tradingStyle ?? slot.tradingStyle,
-                mode: remote.mode ?? slot.mode,
-                safetyStopActive: Boolean(remote.safetyStopActive),
-                consecutiveLosses:
-                  typeof remote.consecutiveLosses === "number"
-                    ? remote.consecutiveLosses
-                    : slot.consecutiveLosses,
-              });
-            }
-          }
-        }
-
+        await hydrateFromServer();
         const after = useAppStore.getState();
         lastSavedSigRef.current = `${mainTradingSignature(after)}|${slotTradingSignature(after.multiChartSlots)}`;
 
+        // Push non-symbol settings (timeframe/style/mode/risk) — server protects AUTO symbol.
         void fetch("/api/settings/engine-config", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -96,6 +114,18 @@ export function EngineConfigSync() {
         hydratedRef.current = true;
       }
     })();
+  }, []);
+
+  // Re-sync when UI reconnects / stays open so chart mirrors engine routing.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (!hydratedRef.current) return;
+      void hydrateFromServer().then(() => {
+        const after = useAppStore.getState();
+        lastSavedSigRef.current = `${mainTradingSignature(after)}|${slotTradingSignature(after.multiChartSlots)}`;
+      });
+    }, 5000);
+    return () => window.clearInterval(id);
   }, []);
 
   useEffect(() => {

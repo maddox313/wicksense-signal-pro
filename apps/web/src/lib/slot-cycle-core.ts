@@ -1,12 +1,11 @@
 import type { Signal, StrategyPreset, Trade, TradingScheduleSettings, AlertSettings, RiskSettings } from "@wicksense/core";
 import {
+  detectActionableSignal,
   detectCurrentBarSignals,
-  detectFreshBarSignal,
-  canEnterNewPositions,
-  evaluateTradingSchedule,
 } from "@wicksense/core";
 import { logDuplicateSignalBlocked } from "@/lib/signal-dedupe-log";
 import type { FetchBarsResult, SlotTradeConfig } from "@/lib/autoTradeRunner";
+import { evaluateSlotEntryGates } from "@/lib/slot-entry-gates";
 
 export interface SlotCycleExecuteResult {
   ok: boolean;
@@ -42,22 +41,22 @@ export interface SlotCycleContext {
   recordSignalConverted?: (signal: Signal) => void;
   recordDetectError?: (message: string) => void;
   clearDetectError?: () => void;
-}
-
-function hasActiveTradeForSignal(trades: Trade[], slotId: string, signalId: string): boolean {
-  return trades.some(
-    (trade) =>
-      trade.chartSlot === slotId &&
-      (trade.signalId === signalId || trade.id === `trade-${slotId}-${signalId}`)
-  );
+  /**
+   * Optional server-side gate (e.g. paper VWAP Bounce ROC4/RelVol).
+   * Must not pull Node `fs` into the client bundle — provide only from server engine.
+   */
+  filterSignalBeforeExecute?: (params: {
+    signal: Signal;
+    bars: FetchBarsResult["bars"];
+    config: SlotTradeConfig;
+  }) => Promise<{ allow: boolean; reason?: string } | void>;
 }
 
 export async function runSlotCycleWithContext(
   config: SlotTradeConfig,
   ctx: SlotCycleContext
 ): Promise<void> {
-  const { slotId, symbol, timeframe, tradingStyle, mode, autoTradeEnabled, safetyStopActive } =
-    config;
+  const { slotId, symbol, timeframe, tradingStyle, mode } = config;
 
   const { bars } = await ctx.fetchBars(symbol, timeframe);
 
@@ -102,7 +101,7 @@ export async function runSlotCycleWithContext(
 
   try {
     const tf = timeframe || "15m";
-    const signal = detectFreshBarSignal(
+    const signal = detectActionableSignal(
       symbol,
       bars,
       activePreset.strategies,
@@ -147,140 +146,34 @@ export async function runSlotCycleWithContext(
       ctx.recordSignalRejected?.(signal, reason);
     };
 
-    if (!autoTradeEnabled) {
-      rejectSignal("Auto trade disabled");
-      recordScan({
-        chartSlot: slotId,
-        symbol,
-        timeframe,
-        barCount: bars.length,
-        presetId: activePreset.id,
-        presetStrategies: activePreset.strategies,
-        barSignalCount: barSignals.length,
-        strategiesFired,
-        pickedStrategy: signal.strategy,
-        outcome: "signal_seen",
-        detail: "Auto trade disabled",
-      });
-      return;
-    }
-
-    const scheduleCheck =
-      signal.side === "buy"
-        ? canEnterNewPositions(ctx.tradingSchedule)
-        : evaluateTradingSchedule(ctx.tradingSchedule);
-    if (!scheduleCheck.allowed) {
-      rejectSignal(scheduleCheck.reason ?? "Outside trading schedule");
-      recordScan({
-        chartSlot: slotId,
-        symbol,
-        timeframe,
-        barCount: bars.length,
-        presetId: activePreset.id,
-        presetStrategies: activePreset.strategies,
-        barSignalCount: barSignals.length,
-        strategiesFired,
-        pickedStrategy: signal.strategy,
-        outcome: "schedule_blocked",
-        detail: scheduleCheck.reason ?? "Outside trading schedule",
-      });
-      return;
-    }
-
-    if (safetyStopActive) {
-      rejectSignal("Safety stop active");
-      recordScan({
-        chartSlot: slotId,
-        symbol,
-        timeframe,
-        barCount: bars.length,
-        presetId: activePreset.id,
-        presetStrategies: activePreset.strategies,
-        barSignalCount: barSignals.length,
-        strategiesFired,
-        pickedStrategy: signal.strategy,
-        outcome: "signal_seen",
-        detail: "Safety stop active",
-      });
-      return;
-    }
-
-    if (mode === "manual") {
-      rejectSignal("Manual mode");
-      recordScan({
-        chartSlot: slotId,
-        symbol,
-        timeframe,
-        barCount: bars.length,
-        presetId: activePreset.id,
-        presetStrategies: activePreset.strategies,
-        barSignalCount: barSignals.length,
-        strategiesFired,
-        pickedStrategy: signal.strategy,
-        outcome: "signal_seen",
-        detail: "Manual mode",
-      });
-      return;
-    }
-
     const trades = await ctx.getTrades();
+    const gate = await evaluateSlotEntryGates({
+      config,
+      signal,
+      bars,
+      trades,
+      tradingSchedule: ctx.tradingSchedule,
+      filterSignalBeforeExecute: ctx.filterSignalBeforeExecute,
+    });
 
-    if (signal.side === "sell") {
-      const hasOpenOnSlot = trades.some(
-        (t) =>
-          t.status === "open" &&
-          t.mode === mode &&
-          t.chartSlot === slotId &&
-          t.symbol === symbol &&
-          t.side === "buy"
-      );
-      if (!hasOpenOnSlot) {
-        recordScan({
-          chartSlot: slotId,
+    if (!gate.executable) {
+      const detail = gate.reason;
+      if (detail.includes("Duplicate signal")) {
+        logDuplicateSignalBlocked({
+          slot: slotId,
           symbol,
           timeframe,
-          barCount: bars.length,
-          presetId: activePreset.id,
-          presetStrategies: activePreset.strategies,
-          barSignalCount: barSignals.length,
-          strategiesFired,
-          pickedStrategy: signal.strategy,
-          outcome: "signal_seen",
-          detail: "Sell signal skipped — no open position on this chart (waiting for buy)",
+          strategy: signal.strategy,
+          side: signal.side,
+          barTime: signal.time,
+          signalId: signal.id,
         });
-        return;
+      } else {
+        rejectSignal(detail);
       }
-
-      // Day scalp: exits are managed by auto-exit TP/SL — opposing sell signals fire too early.
-      if (autoTradeEnabled && tradingStyle === "day") {
-        rejectSignal("Day scalp exits via auto-exit TP/SL only");
-        recordScan({
-          chartSlot: slotId,
-          symbol,
-          timeframe,
-          barCount: bars.length,
-          presetId: activePreset.id,
-          presetStrategies: activePreset.strategies,
-          barSignalCount: barSignals.length,
-          strategiesFired,
-          pickedStrategy: signal.strategy,
-          outcome: "signal_seen",
-          detail: `Strategy sell ignored (${signal.reason}) — waiting for TP/SL auto-exit`,
-        });
-        return;
-      }
-    }
-
-    if (hasActiveTradeForSignal(trades, slotId, signal.id)) {
-      logDuplicateSignalBlocked({
-        slot: slotId,
-        symbol,
-        timeframe,
-        strategy: signal.strategy,
-        side: signal.side,
-        barTime: signal.time,
-        signalId: signal.id,
-      });
+      const outcome = detail.toLowerCase().includes("schedule")
+        ? "schedule_blocked"
+        : "signal_seen";
       recordScan({
         chartSlot: slotId,
         symbol,
@@ -291,8 +184,13 @@ export async function runSlotCycleWithContext(
         barSignalCount: barSignals.length,
         strategiesFired,
         pickedStrategy: signal.strategy,
-        outcome: "signal_seen",
-        detail: "Duplicate signal (trade already recorded)",
+        outcome,
+        detail:
+          detail === "Sell signal skipped — no open position on this chart"
+            ? "Sell signal skipped — no open position on this chart (waiting for buy)"
+            : detail === "Day scalp exits via auto-exit TP/SL only"
+              ? `Strategy sell ignored (${signal.reason}) — waiting for TP/SL auto-exit`
+              : detail,
       });
       return;
     }

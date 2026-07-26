@@ -120,6 +120,9 @@ interface AppState {
   symbol: string;
   timeframe: string;
   tradingStyle: "day" | "swing";
+  /** Mirrors server main-chart-routing.local.json — engine is authoritative. */
+  mainChartRoutingMode: "AUTO" | "MANUAL";
+  mainChartRoutingReason: string | null;
   mode: TradeMode;
   autoTradeEnabled: boolean;
   markers: ChartMarker[];
@@ -141,6 +144,12 @@ interface AppState {
   chartStyles: Record<string, ChartStyle>;
 
   setSymbol: (symbol: string) => void;
+  /** Apply Main Chart symbol from server routing without flipping to MANUAL. */
+  applyServerMainSymbol: (symbol: string) => void;
+  setMainChartRoutingMeta: (meta: {
+    mode: "AUTO" | "MANUAL";
+    reason?: string | null;
+  }) => void;
   setTimeframe: (tf: string) => void;
   setTradingStyle: (style: "day" | "swing") => void;
   setMode: (mode: TradeMode) => void;
@@ -178,6 +187,8 @@ export const useAppStore = create<AppState>((set) => {
   symbol: mainChartPrefs.symbol,
   timeframe: mainChartPrefs.timeframe,
   tradingStyle: mainChartPrefs.tradingStyle,
+  mainChartRoutingMode: "AUTO",
+  mainChartRoutingReason: null,
   mode: "paper",
   autoTradeEnabled: false,
   markers: persistedMarkers.main,
@@ -210,6 +221,22 @@ export const useAppStore = create<AppState>((set) => {
         tradingStyle: next.tradingStyle,
       });
       return { symbol: next.symbol };
+    }),
+  applyServerMainSymbol: (symbol) =>
+    set((s) => {
+      const nextSymbol = symbol.toUpperCase();
+      if (nextSymbol === s.symbol) return s;
+      persistMainChartPrefs({
+        symbol: nextSymbol,
+        timeframe: s.timeframe,
+        tradingStyle: s.tradingStyle,
+      });
+      return { symbol: nextSymbol };
+    }),
+  setMainChartRoutingMeta: (meta) =>
+    set({
+      mainChartRoutingMode: meta.mode,
+      mainChartRoutingReason: meta.reason ?? null,
     }),
   setTimeframe: (timeframe) =>
     set((s) => {

@@ -177,6 +177,38 @@ export function detectFreshBarSignal(
   return signal;
 }
 
+/** Bars to scan for a signal the engine can still act on (30s poll interval + prior bar). */
+export const ACTIONABLE_SIGNAL_LOOKBACK = 3;
+
+/**
+ * Most recent tradeable signal on the last N bars (default 3).
+ * Duplicate-signal checks prevent re-entry on the same signal id.
+ */
+export function detectActionableSignal(
+  symbol: string,
+  bars: OHLCV[],
+  strategyIds: string[],
+  style: TradingStyle,
+  timeframe = "5m",
+  lookback = ACTIONABLE_SIGNAL_LOOKBACK,
+  minConfidence = MIN_TRADE_SIGNAL_CONFIDENCE
+): Signal | null {
+  if (bars.length < MIN_BARS) return null;
+
+  const startIdx = Math.max(MIN_BARS - 1, bars.length - lookback);
+  let best: Signal | null = null;
+
+  for (let i = startIdx; i < bars.length; i++) {
+    const slice = bars.slice(0, i + 1);
+    const signals = evaluateStrategies({ symbol, bars: slice, style, timeframe }, strategyIds);
+    const signal = pickScannerSignal(signals);
+    if (!signal || signal.confidence < minConfidence) continue;
+    if (!best || signal.time > best.time) best = signal;
+  }
+
+  return best;
+}
+
 export function scanMarket(
   data: { symbol: string; bars: OHLCV[]; changePercent: number }[],
   strategyIds: string[],
